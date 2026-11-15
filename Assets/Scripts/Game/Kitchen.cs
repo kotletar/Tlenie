@@ -24,6 +24,69 @@ namespace PokaGoryu
         public Transform Root;
         public Vector3 Origin;
 
+        // Кружка для столкновений с кистями: корпус — усечённый конус (радиус у дна и у края), ручка вместе с зазором до стенки — коробка
+        // (в зазор между ручкой и стенкой, 7-10 мм, пальцы не лезут). Размеры совпадают с мешем в BuildLiveParts.
+        const float MugRadiusBottom = 0.052f;
+        const float MugRadiusTop = 0.057f;
+        // по Z коробка шире самой ручки (0,024 м): ладонь, лежащая у ручки, должна выходить наружу (+X), а не вперёд или назад
+        // в зависимости от того, по какую сторону от оси она оказалась на этом кадре (иначе рука дёргается)
+        static readonly Vector3 HandleMin = new Vector3(0.05f, 0.012f, -0.04f);
+        static readonly Vector3 HandleMax = new Vector3(0.098f, 0.115f, 0.04f);
+
+        /// <summary>
+        /// Шар (центр в мировых координатах, радиус): на сколько его надо сдвинуть, чтобы он вышел из кружки; нулевой вектор, если не касается.
+        /// Кружка берётся с её текущим положением (её носят ко рту). Так кисти в кат-сценах не проходят сквозь кружку и ручку
+        /// (HeroBody.HandObstacle).
+        /// </summary>
+        public Vector3 MugPush(Vector3 world, float radius)
+        {
+            if (Mug == null || !Mug.gameObject.activeInHierarchy) return Vector3.zero;
+            Vector3 q = Mug.InverseTransformPoint(world);
+
+            // корпус
+            Vector3 body = Vector3.zero;
+            float yc = Mathf.Clamp(q.y, 0f, MugHeight);
+            float rad = Mathf.Lerp(MugRadiusBottom, MugRadiusTop, yc / MugHeight);
+            Vector2 flat = new Vector2(q.x, q.z);
+            float dist = flat.magnitude;
+            if (dist < rad && q.y > 0f && q.y < MugHeight)
+            {
+                // центр внутри: у самого края (верхние 1.5 см) выходим вверх, ниже — вбок; выбор по высоте, а не по тому, какой путь короче:
+                // у середины стенки «ближе» то вбок, то вверх, и рука на соседних кадрах дёргалась бы
+                float side = rad - dist + radius;
+                float up = MugHeight - q.y + radius;
+                Vector2 dir = dist > 1e-4f ? flat / dist : Vector2.right;
+                body = q.y > MugHeight - 0.015f ? Vector3.up * up : new Vector3(dir.x, 0f, dir.y) * side;
+            }
+            else
+            {
+                Vector2 cp = dist > rad ? flat * (rad / dist) : flat;
+                Vector3 d = q - new Vector3(cp.x, yc, cp.y);
+                float dd = d.magnitude;
+                if (dd < radius && dd > 1e-6f) body = d / dd * (radius - dd);
+            }
+
+            // ручка
+            Vector3 handle = Vector3.zero;
+            Vector3 hc = new Vector3(Mathf.Clamp(q.x, HandleMin.x, HandleMax.x), Mathf.Clamp(q.y, HandleMin.y, HandleMax.y), Mathf.Clamp(q.z, HandleMin.z, HandleMax.z));
+            Vector3 hd = q - hc;
+            float hdd = hd.magnitude;
+            if (hdd > 1e-6f)
+            {
+                if (hdd < radius) handle = hd / hdd * (radius - hdd);
+            }
+            else
+            {
+                // центр внутри коробки: наружу (+X) или вверх, что ближе (пальцы входят справа или сверху). Вниз, вперёд и назад не выходим:
+                // направление скакало бы между ними (рывки руки по 5-9 см), а в сторону кружки нельзя (там корпус).
+                float toRight = HandleMax.x - q.x + radius;
+                float toUp = HandleMax.y - q.y + radius;
+                handle = toRight <= toUp ? Vector3.right * toRight : Vector3.up * toUp;
+            }
+            Vector3 push = body.sqrMagnitude >= handle.sqrMagnitude ? body : handle;
+            return push.sqrMagnitude > 0f ? Mug.TransformVector(push) : Vector3.zero;
+        }
+
         // живые детали
         public Transform Mug;
         public readonly Transform[] Steam = new Transform[3];

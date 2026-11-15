@@ -142,6 +142,13 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "handdetail") StepHandDetail(gm);
                 else if (scenario == "handmotion_intro") StepHandMotion(gm, false);
                 else if (scenario == "handmotion_ending") StepHandMotion(gm, true);
+                else if (scenario == "monsters") StepMonsters(gm);
+                else if (scenario == "mugview_intro") StepMugView(gm, false);
+                else if (scenario == "mugview_ending") StepMugView(gm, true);
+                else if (scenario == "armrig_intro") StepArmRig(gm, false);
+                else if (scenario == "armrig_ending") StepArmRig(gm, true);
+                else if (scenario == "armscan_intro") StepArmScan(gm, false);
+                else if (scenario == "armscan_ending") StepArmScan(gm, true);
                 else if (scenario == "finalstand") StepFinalStand(gm, true);
                 else if (scenario == "finalpassive") StepFinalStand(gm, false);
                 else if (scenario == "econ") StepEcon(gm);
@@ -1187,10 +1194,11 @@ namespace PokaGoryu.EditorTools
         static void StepHandMotion(GameManager gm, bool ending)
         {
             // участки: время сценария для перемотки (кухонное время), сколько кадров снять
+            // предыстория: кружка ко рту, руки с кружки на стол, к свече, левая рука к лицу; концовка: сон на руках, подъём ладоней, колени
             float[] seeks = ending
-                ? new float[] { EndingDirector.TKitchen + 5.3f, EndingDirector.TKitchen + 8.7f }
-                : new float[] { IntroDirector.RealTime(18.8f), IntroDirector.RealTime(21.9f) };
-            int[] counts = ending ? new int[] { 16, 10 } : new int[] { 12, 14 };
+                ? new float[] { EndingDirector.TKitchen + 0.2f, EndingDirector.TKitchen + 5.3f, EndingDirector.TKitchen + 8.7f }
+                : new float[] { IntroDirector.RealTime(2.0f), IntroDirector.RealTime(12.6f), IntroDirector.RealTime(18.8f), IntroDirector.RealTime(21.9f) };
+            int[] counts = ending ? new int[] { 14, 16, 10 } : new int[] { 14, 10, 12, 14 };
             if (frame == 3 && ending) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
             if (frame == 6)
             {
@@ -1216,8 +1224,395 @@ namespace PokaGoryu.EditorTools
             {
                 float now = ending ? gm.Ending.Elapsed - EndingDirector.TKitchen : IntroDirector.KitchenTime(gm.Intro.Elapsed);
                 Capture("m" + seg + "_" + ((local - 20) / 8).ToString("00") + "_" + now.ToString("F2").Replace(',', '.'));
+                LogArms(gm.Player.Body, "m" + seg + "_" + ((local - 20) / 8).ToString("00") + " t=" + now.ToString("F2"));
             }
         }
+
+        /// <summary>Снимок с произвольной точки мира: камера игрока на кадр переставляется и возвращается обратно.</summary>
+        static void CaptureAt(GameManager gm, string name, Vector3 eyeWorld, Vector3 targetWorld)
+        {
+            Camera cam = gm.Player.Cam;
+            Vector3 savedPos = cam.transform.position;
+            Quaternion savedRot = cam.transform.rotation;
+            cam.transform.SetPositionAndRotation(eyeWorld, Quaternion.LookRotation(targetWorld - eyeWorld, Vector3.up));
+            Capture(name);
+            cam.transform.SetPositionAndRotation(savedPos, savedRot);
+        }
+
+        static readonly List<Enemy> monsterList = new List<Enemy>();
+        static EndingLight monsterLight;
+
+        /// <summary>Открытое место в городе (площадь, перекрёсток): точка, вокруг которой в радиусе radius можно стоять. Для кадров вплотную.</summary>
+        static Vector3 FindOpenSpot(float radius)
+        {
+            Vector3 best = new Vector3(171f, 0f, 225f);
+            float bestScore = -1f;
+            for (int cx = 1; cx < CityMap.W - 1; cx++)
+            {
+                for (int cz = 1; cz < CityMap.H - 1; cz++)
+                {
+                    Pt c = CityMap.CenterOf(cx, cz);
+                    if (!CityMap.CanStand(c.X, c.Z, radius, true)) continue;
+                    // чем ближе к середине карты и чем шире, тем лучше; берём первое достаточно широкое
+                    float score = 1000f - Mathf.Abs(c.X - 150f) - Mathf.Abs(c.Z - 220f);
+                    if (score > bestScore) { bestScore = score; best = new Vector3(c.X, 0f, c.Z); }
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Без окна: монстры вплотную. Тень, Гаситель и Пожиратель стоят на месте (оглушены, здоровье не убывает), кадр с точки героя и по четыре
+        /// ракурса каждого (спереди, сбоку, сзади-сбоку, сверху) при вспомогательном свете у камеры. Кадры w00_hero, w{монстр}_{вид}.
+        /// PG_MONSTER_STATE=attack ставит их в позу нападения (Тень в двух метрах от героя), без неё — в позе покоя.
+        /// </summary>
+        static void StepMonsters(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            if (frame == 10)
+            {
+                gm.State = GameState.Playing;
+                gm.Hero.Life = 100f;
+                // самое широкое открытое место: радиус 14 м, иначе поуже (Пожирателю нужен простор)
+                Vector3 spot = FindOpenSpot(14f);
+                if (spot.x == 171f && spot.z == 225f) spot = FindOpenSpot(9f);
+                report.AppendLine("open spot " + spot.ToString("F1"));
+                pc.TeleportTo(spot + new Vector3(0f, 0.1f, -6f), 0f);
+                SetPitch(pc, 0f);
+                gm.Hero.AuraTarget = 2f;
+                monsterList.Clear();
+                monsterList.Add(Enemy.Spawn(EnemyKind.Shade, spot + new Vector3(-2.5f, 0f, 2.5f)));
+                monsterList.Add(Enemy.Spawn(EnemyKind.Snuffer, spot + new Vector3(2.8f, 0f, 0.5f)));
+                monsterList.Add(Enemy.Spawn(EnemyKind.Eater, spot + new Vector3(0f, 0f, 9f)));
+                monsterLight = new EndingLight { Radius = 9f, Intensity = 0.32f, Col = new Color(1f, 0.93f, 0.82f, 1f) };
+                LightField.Register(monsterLight);
+            }
+            if (frame < 10) return;
+            gm.Hero.Life = 100f;
+            for (int i = 0; i < monsterList.Count; i++)
+            {
+                if (monsterList[i] == null) continue;
+                monsterList[i].Stun(5f);
+                monsterList[i].Health = 9999f;
+            }
+            string[] names = { "shade", "snuffer", "eater" };
+            float[] dist = { 3.2f, 1.5f, 10f };
+            float[] centerY = { 1.35f, 1.6f, 2.6f };
+            string[] views = { "front", "side", "back", "top" };
+            int t0 = 75;   // дать врагам появиться (0.9 с) и принять позу
+            if (frame == t0)
+            {
+                monsterLight.Pos = pc.Cam.transform.position + new Vector3(0f, 0.6f, 0f);
+                monsterLight.Intensity = 0.22f;
+                Capture("w00_hero");
+            }
+            int slot = (frame - t0 - 20) / 12;
+            if (frame >= t0 + 20 && slot < 12 && (frame - t0 - 20) % 12 == 0)
+            {
+                int m = slot / 4;
+                int v = slot % 4;
+                Enemy e = monsterList[m];
+                if (e != null)
+                {
+                    float d = dist[m];
+                    Vector3 target = e.transform.position + new Vector3(0f, centerY[m], 0f);
+                    Quaternion yaw = e.transform.rotation;
+                    Vector3 off = v == 0 ? new Vector3(0f, 0.15f * d, d) : v == 1 ? new Vector3(d, 0.12f * d, 0.25f * d) : v == 2 ? new Vector3(-0.7f * d, 0.2f * d, -0.7f * d) : new Vector3(0.2f * d, 0.95f * d, 0.35f * d);
+                    Vector3 eye = target + yaw * off;
+                    monsterLight.Pos = eye + new Vector3(0f, 0.8f, 0f) + (target - eye).normalized * 0.5f;
+                    monsterLight.Intensity = m == 2 ? 0.42f : 0.30f;
+                    CaptureAt(gm, "w" + (m + 1).ToString("0") + "_" + names[m] + "_" + views[v], eye, target);
+                }
+            }
+            // вторая часть: поза нападения (Тень тянет руки, Гаситель раскручивается, Пожиратель жуёт), укус и гибель
+            int t1 = t0 + 20 + 12 * 12 + 10;
+            // пасть Пожирателя вплотную (в покое и широко открытая): видно зубы, глотку и что торчащего изо рта нет
+            if (frame == t1 - 6 || frame == t1 + 18)
+            {
+                Enemy e = monsterList[2];
+                if (e != null)
+                {
+                    Vector3 mouth = e.transform.TransformPoint(new Vector3(0f, 1.55f, 2.0f));
+                    Vector3 eye = mouth + e.transform.rotation * new Vector3(0.6f, 0.45f, 4.2f);
+                    monsterLight.Pos = eye + new Vector3(0f, 0.8f, 0f) + (mouth - eye).normalized * 0.5f;
+                    monsterLight.Intensity = 0.42f;
+                    CaptureAt(gm, frame == t1 - 6 ? "w4_eater_mouth_rest" : "w5_eater_mouth_open", eye, mouth);
+                }
+            }
+            if (frame == t1)
+            {
+                int rend = 0;
+                for (int i = 0; i < monsterList.Count; i++) if (monsterList[i] != null) rend += monsterList[i].BodyParts;
+                report.AppendLine("monster body parts=" + rend + " (shade " + monsterList[0].BodyParts + ", snuffer " + monsterList[1].BodyParts + ", eater " + monsterList[2].BodyParts + ")");
+                for (int i = 0; i < monsterList.Count; i++) monsterList[i].DebugAttack = true;
+            }
+            for (int m = 0; m < 3; m++)
+            {
+                if (frame != t1 + 24 + 12 * m) continue;
+                Enemy e = monsterList[m];
+                float d = dist[m];
+                Vector3 target = e.transform.position + new Vector3(0f, centerY[m], 0f);
+                Vector3 eye = target + e.transform.rotation * new Vector3(0.25f * d, 0.12f * d, d);
+                monsterLight.Pos = eye + new Vector3(0f, 0.8f, 0f) + (target - eye).normalized * 0.5f;
+                CaptureAt(gm, "a" + (m + 1).ToString("0") + "_" + names[m] + "_attack", eye, target);
+            }
+            if (frame == t1 + 66) monsterList[2].DebugBite();
+            if (frame == t1 + 69)
+            {
+                Enemy e = monsterList[2];
+                Vector3 target = e.transform.position + new Vector3(0f, centerY[2], 0f);
+                Vector3 eye = target + e.transform.rotation * new Vector3(0.15f * dist[2], 0.12f * dist[2], dist[2]);
+                CaptureAt(gm, "a4_eater_bite", eye, target);
+            }
+            if (frame == t1 + 80) monsterList[0].TakeDamage(1000000f, DamageKind.Beam);
+            if (frame == t1 + 80 + 12)
+            {
+                Enemy e = monsterList[0];
+                if (e != null)
+                {
+                    Vector3 target = e.transform.position + new Vector3(0f, 1.0f, 0f);
+                    Vector3 eye = target + e.transform.rotation * new Vector3(0.25f * dist[0], 0.15f * dist[0], dist[0]);
+                    CaptureAt(gm, "a5_shade_collapse", eye, target);
+                }
+                else report.AppendLine("the dead shade is already gone");
+            }
+            if (frame == t1 + 80 + 60)
+            {
+                report.AppendLine("after death: enemies listed=" + Enemy.All.Count + ", dead shade object " + (monsterList[0] == null ? "destroyed" : "still there"));
+                Finish("OK", errors > 0 ? 2 : 0);
+            }
+        }
+
+        /// <summary>Снимок с произвольной точки (пространство тела героя): камера игрока на кадр переставляется и возвращается обратно.</summary>
+        static void CaptureView(GameManager gm, string name, Vector3 eyeBody, Vector3 targetBody)
+        {
+            Camera cam = gm.Player.Cam;
+            Transform root = gm.Player.transform;
+            Vector3 savedPos = cam.transform.position;
+            Quaternion savedRot = cam.transform.rotation;
+            Vector3 eye = root.TransformPoint(eyeBody);
+            cam.transform.SetPositionAndRotation(eye, Quaternion.LookRotation(root.TransformPoint(targetBody) - eye, Vector3.up));
+            Capture(name);
+            cam.transform.SetPositionAndRotation(savedPos, savedRot);
+        }
+
+        /// <summary>
+        /// Без окна: руки героя в ключевых позах предыстории или концовки сбоку, сверху и спереди (не из глаз): видно, как согнут локоть, где он
+        /// стоит и нет ли вывернутых суставов. Кадры v{номер}_{вид}_{время}; для каждой позы строка в отчёте (длины костей, угол в локте).
+        /// </summary>
+        static void StepArmRig(GameManager gm, bool ending)
+        {
+            float[] times = ending
+                ? new float[] { 0.5f, 2.2f, 4.0f, 7.0f, 8.7f, 11.0f }
+                : new float[] { 3.0f, 6.0f, 14.5f, 19.4f, 21.0f, 25.0f };
+            if (frame == 3 && ending) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
+            if (frame == 6)
+            {
+                if (ending)
+                {
+                    if (Bus.Instance != null) Bus.Instance.BoardedCount = 6;
+                    gm.Win();
+                }
+                else gm.StartGame();
+            }
+            if (frame < 14) return;
+            const int per = 40;
+            int f = frame - 14;
+            int slot = f / per;
+            int ph = f % per;
+            if (slot >= times.Length) { Finish("OK", errors > 0 ? 2 : 0); return; }
+            if (ph == 0)
+            {
+                if (ending) gm.Ending.DebugSeek(EndingDirector.TKitchen + times[slot]);
+                else gm.Intro.DebugSeek(IntroDirector.RealTime(times[slot]));
+            }
+            if (ph >= 28 && ph <= 30)
+            {
+                float now = ending ? gm.Ending.Elapsed - EndingDirector.TKitchen : IntroDirector.KitchenTime(gm.Intro.Elapsed);
+                string tag = "v" + slot + "_" + new[] { "side", "top", "front" }[ph - 28] + "_" + now.ToString("F1").Replace(',', '.');
+                Vector3 eye, target;
+                if (ph == 28) { eye = new Vector3(1.05f, 1.28f, 0.38f); target = new Vector3(0f, 1.2f, 0.36f); }
+                else if (ph == 29) { eye = new Vector3(0f, 2.0f, 0.02f); target = new Vector3(0f, 1.2f, 0.40f); }
+                else { eye = new Vector3(0f, 1.42f, 1.15f); target = new Vector3(0f, 1.22f, 0.20f); }
+                CaptureView(gm, tag, eye, target);
+                if (ph == 28) LogArms(gm.Player.Body, tag);
+            }
+        }
+
+        /// <summary>Строка отчёта о руках: длины костей, угол в локте (180 — прямая рука), локоть относительно плеча и запястья, сдвиг кисти кружкой.</summary>
+        static void LogArms(HeroBody body, string tag)
+        {
+            string line = tag;
+            for (int a = 0; a < 2; a++)
+            {
+                Vector3 s, e, w;
+                body.GetArm(a, out s, out e, out w);
+                line += (a == 0 ? "  L" : "  R") + " up=" + (e - s).magnitude.ToString("0.00") + " fore=" + (w - e).magnitude.ToString("0.00")
+                    + " ang=" + Vector3.Angle(s - e, w - e).ToString("0") + " elbow=" + e.ToString("0.00") + " push=" + (body.GetHandPush(a).magnitude * 100f).ToString("0.0") + " cm";
+            }
+            report.AppendLine(line);
+        }
+
+        /// <summary>
+        /// Без окна: кружка и кисти вплотную с трёх сторон и сверху (кадры u{номер}_{вид}_{время}) в моменты, когда рука рядом с кружкой:
+        /// держат, несут ко рту, отпускают, толкаются от стола в концовке. Видно, проходят ли пальцы и ладонь сквозь кружку и ручку.
+        /// </summary>
+        static void StepMugView(GameManager gm, bool ending)
+        {
+            float[] times = ending
+                ? new float[] { 1.3f, 1.7f, 2.0f, 2.4f, 2.9f, 4.5f }
+                : new float[] { 1.0f, 3.2f, 5.0f, 8.0f, 12.0f, 12.8f, 13.6f, 15.0f };
+            if (frame == 3 && ending) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
+            if (frame == 6)
+            {
+                if (ending)
+                {
+                    if (Bus.Instance != null) Bus.Instance.BoardedCount = 6;
+                    gm.Win();
+                }
+                else gm.StartGame();
+            }
+            if (frame < 14) return;
+            // PG_NO_OBSTACLE=1: без столкновений кистей с кружкой (для сравнения «до»)
+            if (Environment.GetEnvironmentVariable("PG_NO_OBSTACLE") == "1") gm.Player.Body.HandObstacle = null;
+            const int per = 44;
+            int f = frame - 14;
+            int slot = f / per;
+            int ph = f % per;
+            if (slot >= times.Length) { Finish("OK", errors > 0 ? 2 : 0); return; }
+            if (ph == 0)
+            {
+                if (ending) gm.Ending.DebugSeek(EndingDirector.TKitchen + times[slot]);
+                else gm.Intro.DebugSeek(IntroDirector.RealTime(times[slot]));
+            }
+            if (ph >= 28 && ph <= 31)
+            {
+                float now = ending ? gm.Ending.Elapsed - EndingDirector.TKitchen : IntroDirector.KitchenTime(gm.Intro.Elapsed);
+                // кружка в пространстве тела: на столе её низ в (0.02, 1.226, 0.66); поднятая ко рту она уезжает вверх и к герою, поэтому цель берём по самой кружке
+                Vector3 mugBody = gm.Intro.AcquireKitchen().Mug.position - gm.Player.transform.position;
+                Vector3 target = mugBody + new Vector3(0f, 0.06f, 0f);
+                string[] views = { "right", "left", "top", "eye" };
+                string tag = "u" + slot + "_" + views[ph - 28] + "_" + now.ToString("F1").Replace(',', '.');
+                if (ph == 31) Capture(tag);
+                else if (ph == 28) CaptureView(gm, tag, target + new Vector3(0.34f, 0.20f, 0.34f), target);
+                else if (ph == 29) CaptureView(gm, tag, target + new Vector3(-0.34f, 0.20f, 0.34f), target);
+                else CaptureView(gm, tag, target + new Vector3(0.02f, 0.40f, 0.10f), target);
+                if (ph == 28) LogArms(gm.Player.Body, tag);
+            }
+        }
+
+        /// <summary>
+        /// Без окна: вся предыстория или вся концовка кадр за кадром (время идёт само). По телу руки в каждом кадре считаются длины костей,
+        /// угол в локте и скачок локтя; в отчёт идёт строка каждые 0.5 с и итог по каждой руке: сколько кадров рука почти прямая, как далеко
+        /// гуляют длины костей и какой самый резкий скачок локтя.
+        /// </summary>
+        static void StepArmScan(GameManager gm, bool ending)
+        {
+            if (frame == 3 && ending) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
+            if (frame == 6)
+            {
+                if (ending)
+                {
+                    if (Bus.Instance != null) Bus.Instance.BoardedCount = 6;
+                    gm.Win();
+                }
+                else gm.StartGame();
+            }
+            if (frame < 12) return;
+            HeroBody body = gm.Player.Body;
+            bool running = ending ? gm.Ending.Active : gm.Intro.Active;
+            if (!running)
+            {
+                for (int a = 0; a < 2; a++)
+                {
+                    report.AppendLine((a == 0 ? "LEFT " : "RIGHT") + " frames=" + scanFrames + " nearlyStraight(>172)=" + scanStraight[a] + " tooBent(<35)=" + scanBent[a]
+                        + " angle " + scanMinAng[a].ToString("0") + ".." + scanMaxAng[a].ToString("0")
+                        + " upper " + scanMinUp[a].ToString("0.000") + ".." + scanMaxUp[a].ToString("0.000")
+                        + " fore " + scanMinFore[a].ToString("0.000") + ".." + scanMaxFore[a].ToString("0.000")
+                        + " maxElbowStep=" + (scanMaxStep[a] * 60f).ToString("0.00") + " m/s"
+                        + " | mug push: frames=" + scanPushFrames[a] + " max=" + (scanMaxPush[a] * 100f).ToString("0.0") + " cm, biggest jump between frames="
+                        + (scanMaxPushStep[a] * 100f).ToString("0.0") + " cm");
+                    report.AppendLine("      the same hands with the old arm (static shoulder, elbow offset from the middle): angle " + oldMinAng[a].ToString("0") + ".." + oldMaxAng[a].ToString("0")
+                        + " nearlyStraight(>150)=" + oldStraight[a] + " upper " + oldMinUp[a].ToString("0.000") + ".." + oldMaxUp[a].ToString("0.000")
+                        + " fore " + oldMinFore[a].ToString("0.000") + ".." + oldMaxFore[a].ToString("0.000"));
+                }
+                Finish("OK", errors > 0 ? 2 : 0);
+                return;
+            }
+            float now = ending ? gm.Ending.Elapsed : gm.Intro.Elapsed;
+            if (scanFrames == 0)
+                for (int a = 0; a < 2; a++) { scanMinAng[a] = oldMinAng[a] = 999f; scanMinUp[a] = scanMinFore[a] = oldMinUp[a] = oldMinFore[a] = 99f; }
+            scanFrames++;
+            for (int a = 0; a < 2; a++)
+            {
+                Vector3 s, e, w;
+                body.GetArm(a, out s, out e, out w);
+                float ang = Vector3.Angle(s - e, w - e);
+                float up = (e - s).magnitude;
+                float fore = (w - e).magnitude;
+                // те же кисти со старой рукой: плечо стоит на месте, локоть смещён от середины на постоянную величину
+                Vector3 s0 = new Vector3(a == 0 ? -0.25f : 0.25f, 1.37f, 0f);
+                Vector3 e0 = (s0 + w) * 0.5f + new Vector3((a == 0 ? -1f : 1f) * 0.07f, -0.11f, -0.04f);
+                float angOld = Vector3.Angle(s0 - e0, w - e0);
+                oldMinAng[a] = Mathf.Min(oldMinAng[a], angOld);
+                oldMaxAng[a] = Mathf.Max(oldMaxAng[a], angOld);
+                oldMinUp[a] = Mathf.Min(oldMinUp[a], (e0 - s0).magnitude);
+                oldMaxUp[a] = Mathf.Max(oldMaxUp[a], (e0 - s0).magnitude);
+                oldMinFore[a] = Mathf.Min(oldMinFore[a], (w - e0).magnitude);
+                oldMaxFore[a] = Mathf.Max(oldMaxFore[a], (w - e0).magnitude);
+                if (angOld > 150f) oldStraight[a]++;
+                scanMinAng[a] = Mathf.Min(scanMinAng[a], ang);
+                scanMaxAng[a] = Mathf.Max(scanMaxAng[a], ang);
+                scanMinUp[a] = Mathf.Min(scanMinUp[a], up);
+                scanMaxUp[a] = Mathf.Max(scanMaxUp[a], up);
+                scanMinFore[a] = Mathf.Min(scanMinFore[a], fore);
+                scanMaxFore[a] = Mathf.Max(scanMaxFore[a], fore);
+                if (ang > 172f) scanStraight[a]++;
+                if (ang < 35f) scanBent[a]++;
+                bool cut = ending && now >= EndingDirector.TKitchen && now < EndingDirector.TKitchen + 0.05f;   // склейка автобус -> кухня (первые кадры): не движение
+                if (scanFrames > 1 && !cut) scanMaxStep[a] = Mathf.Max(scanMaxStep[a], (e - scanPrevElbow[a]).magnitude);
+                scanPrevElbow[a] = e;
+                // сдвиг кисти кружкой: насколько сильно и как резко (скачок между кадрами — рывок руки)
+                Vector3 push = body.GetHandPush(a);
+                scanMaxPush[a] = Mathf.Max(scanMaxPush[a], push.magnitude);
+                if (scanFrames > 1 && !cut) scanMaxPushStep[a] = Mathf.Max(scanMaxPushStep[a], (push - scanPrevPush[a]).magnitude);
+                if (scanFrames > 1 && !cut && (push - scanPrevPush[a]).magnitude > 0.02f && scanJumpLines < 14)
+                {
+                    scanJumpLines++;
+                    report.AppendLine("  push jump " + (a == 0 ? "L" : "R") + " at t=" + (ending ? now - EndingDirector.TKitchen : IntroDirector.KitchenTime(now)).ToString("F2")
+                        + ": " + (scanPrevPush[a] * 100f).ToString("0.0") + " -> " + (push * 100f).ToString("0.0") + " cm");
+                }
+                scanPrevPush[a] = push;
+                if (push.sqrMagnitude > 1e-8f) scanPushFrames[a]++;
+            }
+            scanPrevNow = now;
+            if (frame % 30 == 0) LogArms(body, "t=" + (ending ? now - EndingDirector.TKitchen : IntroDirector.KitchenTime(now)).ToString("F1") + (ending ? " k" : " x"));
+        }
+
+        static int scanFrames;
+        static float scanPrevNow;
+        static readonly int[] scanStraight = new int[2];
+        static readonly int[] scanBent = new int[2];
+        static readonly float[] scanMinAng = new float[2];
+        static readonly float[] scanMaxAng = new float[2];
+        static readonly float[] scanMinUp = new float[2];
+        static readonly float[] scanMaxUp = new float[2];
+        static readonly float[] scanMinFore = new float[2];
+        static readonly float[] scanMaxFore = new float[2];
+        static readonly float[] scanMaxStep = new float[2];
+        static readonly Vector3[] scanPrevElbow = new Vector3[2];
+        static int scanJumpLines;
+        static readonly float[] scanMaxPush = new float[2];
+        static readonly float[] scanMaxPushStep = new float[2];
+        static readonly Vector3[] scanPrevPush = new Vector3[2];
+        static readonly int[] scanPushFrames = new int[2];
+        static readonly int[] oldStraight = new int[2];
+        static readonly float[] oldMinAng = new float[2];
+        static readonly float[] oldMaxAng = new float[2];
+        static readonly float[] oldMinUp = new float[2];
+        static readonly float[] oldMaxUp = new float[2];
+        static readonly float[] oldMinFore = new float[2];
+        static readonly float[] oldMaxFore = new float[2];
 
         static EndingLight detailLight;
 

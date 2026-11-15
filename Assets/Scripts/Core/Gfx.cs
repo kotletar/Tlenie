@@ -23,9 +23,6 @@ namespace PokaGoryu
         public static Texture2D TexGrass;
         public static Texture2D TexHalo;
         public static Texture2D TexVignette;
-        public static Texture2D TexShade;
-        public static Texture2D TexSnuffer;
-        public static Texture2D TexEater;
         public static Texture2D TexHorizon;
         public static Texture2D TexRing;
 
@@ -424,7 +421,7 @@ namespace PokaGoryu
 
         static void BuildTextures()
         {
-            TexGen.BuildAll();   // фасады, асфальт, плитка и спрайты врагов — в TexGen
+            TexGen.BuildAll();   // фасады, асфальт, плитка — в TexGen
             TexHalo = MakeHalo();
             TexVignette = MakeVignette();
             TexHorizon = MakeHorizon();

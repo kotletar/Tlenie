@@ -7,7 +7,7 @@ namespace PokaGoryu
     public enum DamageKind { Flash, Beam, Light }
 
     /// <summary>
-    /// Порождения Тьмы (плоские 2D-спрайты в 3D-мире, всегда лицом к камере).
+    /// Порождения Тьмы (3D-тела из частей: EnemyRig и EnemyModels; сам объект поворачивается лицом к цели или по ходу движения).
     ///  - Тень: стайная, боится света (шире аура — держатся дальше), в темноте кусает людей и героя.
     ///  - Гаситель: мелкий и быстрый, тянется к слабым огням: гасит лампы и ранит людей. Умирает от вспышки.
     ///  - Пожиратель: огромный, медленный, к свету невосприимчив, жрёт людей. Берётся только лучом (дорого) — или обойти.
@@ -32,8 +32,6 @@ namespace PokaGoryu
         float maxHealth;
         float speed;
         float centerY;
-        float spriteBaseY;
-        Vector2 spriteSize;
         float stun;
         float attackCd;
         float heroCd;
@@ -42,10 +40,22 @@ namespace PokaGoryu
         float seed;
         float hitPulse;
         bool dead;
-        Material mat;
-        Transform sprite;
         Lamp targetLamp;
         Survivor targetSurvivor;
+
+        // тело и поворот: враг смотрит туда, куда идёт, а нападая — на цель
+        EnemyRig rig;
+        Vector3 lastPos;
+        Vector3 moveVel;
+        float yaw;
+        float turnRate = 240f;
+        bool attacking;
+        bool hasFace;
+        Vector3 faceTarget;
+        float biteT;
+
+        /// <summary>Для автотестов и стенда: число частей тела (отрисовщиков) врага; ноль — тела нет.</summary>
+        public int BodyParts { get { return rig != null ? rig.RendererCount : 0; } }
 
         // навигация по дорогам: враги не проходят сквозь дома и стены
         float navRadius = 0.5f;
@@ -87,20 +97,16 @@ namespace PokaGoryu
         {
             Kind = kind;
             seed = Random.value * 50f;
-            Texture2D tex;
             switch (kind)
             {
                 case EnemyKind.Shade:
-                    maxHealth = 25f; speed = 3.4f; HitRadius = 0.9f; centerY = 1.3f; navRadius = 0.55f;
-                    tex = Gfx.TexShade; spriteSize = new Vector2(1.9f, 2.8f); spriteBaseY = 1.4f;
+                    maxHealth = 25f; speed = 3.4f; HitRadius = 0.9f; centerY = 1.3f; navRadius = 0.55f; turnRate = 260f;
                     break;
                 case EnemyKind.Snuffer:
-                    maxHealth = 12f; speed = 5.6f; HitRadius = 0.6f; centerY = 1.6f; navRadius = 0.4f;
-                    tex = Gfx.TexSnuffer; spriteSize = new Vector2(1.0f, 1.0f); spriteBaseY = 1.6f;
+                    maxHealth = 12f; speed = 5.6f; HitRadius = 0.6f; centerY = 1.6f; navRadius = 0.4f; turnRate = 480f;
                     break;
                 default:
-                    maxHealth = 160f; speed = 1.7f; HitRadius = 1.8f; centerY = 2.4f; navRadius = 1.5f;
-                    tex = Gfx.TexEater; spriteSize = new Vector2(4.6f, 5.8f); spriteBaseY = 2.9f;
+                    maxHealth = 160f; speed = 1.7f; HitRadius = 1.8f; centerY = 2.4f; navRadius = 1.5f; turnRate = 90f;
                     break;
             }
             Health = maxHealth;
@@ -108,9 +114,16 @@ namespace PokaGoryu
             slideSide = Random.value < 0.5f ? 1f : -1f;
             SnapToRoad();
 
-            mat = Gfx.Unlit(new Color(1f, 1f, 1f, 0f), tex, false, true, 0.6f);
-            GameObject sp = Gfx.Sprite(transform, new Vector3(0f, spriteBaseY, 0f), spriteSize, mat, true);
-            sprite = sp.transform;
+            // тело: рождается лицом к герою
+            PlayerController pl0 = PlayerController.Instance;
+            if (pl0 != null)
+            {
+                Vector3 to = pl0.transform.position - transform.position;
+                yaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
+            }
+            transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            lastPos = transform.position;
+            rig = EnemyRig.Create(kind, transform, seed);
 
             if (kind == EnemyKind.Eater) ProcAudio.Source(gameObject, "eater", true, 0.6f, true);
             else ProcAudio.Source(gameObject, "shade", true, kind == EnemyKind.Shade ? 0.22f : 0.14f, true);
@@ -121,7 +134,7 @@ namespace PokaGoryu
         void OnDestroy()
         {
             All.Remove(this);
-            if (mat != null) Destroy(mat);
+            if (rig != null) rig.Dispose();
         }
 
         static float Horizontal(Vector3 a, Vector3 b)
@@ -320,8 +333,7 @@ namespace PokaGoryu
             attackCd -= dt;
             heroCd -= dt;
             hitPulse = Mathf.MoveTowards(hitPulse, 0f, dt * 6f);
-
-            mat.SetColor("_Color", new Color(1f, 1f, 1f, Mathf.Clamp01(age / 0.9f)));
+            biteT = Mathf.MoveTowards(biteT, 0f, dt * 3.5f);
 
             if (Horizontal(transform.position, pl.transform.position) > 85f)
             {
@@ -329,6 +341,8 @@ namespace PokaGoryu
                 return;
             }
 
+            attacking = false;
+            hasFace = false;
             switch (Kind)
             {
                 case EnemyKind.Shade: UpdateShade(dt, pl); break;
@@ -336,11 +350,45 @@ namespace PokaGoryu
                 default: UpdateEater(dt, pl); break;
             }
             if (dead) return;
+            AnimateBody(dt);
+        }
 
-            float bob = Kind == EnemyKind.Snuffer ? Mathf.Sin(age * 5f + seed) * 0.25f : Mathf.Sin(age * 2f + seed) * 0.05f;
-            sprite.localPosition = new Vector3(0f, spriteBaseY + bob, 0f);
-            float k = 1f + hitPulse * 0.2f;
-            sprite.localScale = new Vector3(spriteSize.x * k, spriteSize.y * k, 1f);
+        /// <summary>Поворот лицом по ходу (а нападая — на цель) и анимация частей тела.</summary>
+        void AnimateBody(float dt)
+        {
+            Vector3 pos = transform.position;
+            Vector3 vel = dt > 0f ? (pos - lastPos) / dt : Vector3.zero;
+            vel.y = 0f;
+            lastPos = pos;
+            moveVel = Vector3.Lerp(moveVel, vel, 1f - Mathf.Exp(-9f * dt));
+            Vector3 look = Vector3.zero;
+            if (hasFace) look = faceTarget - pos;
+            else if (moveVel.magnitude > 0.35f) look = moveVel;
+            look.y = 0f;
+            if (look.sqrMagnitude > 0.0004f)
+            {
+                float want = Mathf.Atan2(look.x, look.z) * Mathf.Rad2Deg;
+                yaw = Mathf.MoveTowardsAngle(yaw, want, turnRate * dt);
+                transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            }
+            EnemyPose pose = new EnemyPose
+            {
+                Age = age,
+                Speed = moveVel.magnitude,
+                Attacking = attacking || DebugAttack,
+                Stun = Mathf.Max(0f, stun),
+                Hit = hitPulse,
+                Bite = biteT
+            };
+            rig.Animate(pose, dt);
+        }
+
+        /// <summary>Цель нападения: враг разворачивается к ней и тянется.</summary>
+        void Attack(Vector3 target)
+        {
+            attacking = true;
+            hasFace = true;
+            faceTarget = target;
         }
 
         // ------------------------------------------------------------------ Тень
@@ -406,10 +454,12 @@ namespace PokaGoryu
             }
             else if (toHero)
             {
+                Attack(pl.transform.position);
                 pl.Hero.Damage(GameConfig.ShadeDpsHero * dt);
             }
             else if (ts != null)
             {
+                Attack(tp);
                 ts.Hurt(GameConfig.ShadeDpsSurvivor * dt);
             }
         }
@@ -475,7 +525,11 @@ namespace PokaGoryu
                 Vector3 dir = new Vector3(lp.x - pos.x, 0f, lp.z - pos.z);
                 bool near = dir.magnitude <= 1.4f && CityMap.LineClear(pos.x, pos.z, lp.x, lp.z, 0f, true);
                 if (!near) MoveToward(lp, speed, dt, 1.2f);
-                else targetLamp.Snuff(GameConfig.SnufferDpsLamp * dt);
+                else
+                {
+                    Attack(lp);
+                    targetLamp.Snuff(GameConfig.SnufferDpsLamp * dt);
+                }
             }
             else if (targetSurvivor != null)
             {
@@ -489,7 +543,11 @@ namespace PokaGoryu
                 dir.y = 0f;
                 bool near = dir.magnitude <= 1.2f && CityMap.LineClear(pos.x, pos.z, sp.x, sp.z, 0f, true);
                 if (!near) MoveToward(sp, speed, dt, 1.1f);
-                else targetSurvivor.Hurt(GameConfig.SnufferDpsSurvivor * dt);
+                else
+                {
+                    Attack(sp);
+                    targetSurvivor.Hurt(GameConfig.SnufferDpsSurvivor * dt);
+                }
             }
             else
             {
@@ -523,19 +581,25 @@ namespace PokaGoryu
             dir.y = 0f;
             bool inReach = dir.magnitude <= 2.0f && CityMap.LineClear(pos.x, pos.z, tp.x, tp.z, 0f, true);
             if (!inReach) MoveToward(tp, speed, dt, 1.8f);
-            else if (ts != null && attackCd <= 0f)
+            else
             {
-                // укус, а не мгновенная смерть: у человека есть время убежать к свету
-                attackCd = 2.5f;
-                ts.Hurt(GameConfig.EaterBiteSurvivor);
-                GameManager gm = GameManager.Instance;
-                if (gm != null && ts.State == Survivor.Mode.Dead) gm.Notify("Пожиратель проглотил огонёк");
+                Attack(tp);   // цель в пасти: жуёт, а на укусе захлопывает
+                if (ts != null && attackCd <= 0f)
+                {
+                    // укус, а не мгновенная смерть: у человека есть время убежать к свету
+                    attackCd = 2.5f;
+                    biteT = 1f;
+                    ts.Hurt(GameConfig.EaterBiteSurvivor);
+                    GameManager gm = GameManager.Instance;
+                    if (gm != null && ts.State == Survivor.Mode.Dead) gm.Notify("Пожиратель проглотил огонёк");
+                }
             }
 
             if (heroCd <= 0f && Horizontal(pos, pl.transform.position) < 2.4f
                 && CityMap.LineClear(pos.x, pos.z, pl.transform.position.x, pl.transform.position.z, 0f, true))
             {
                 heroCd = 2.5f;
+                biteT = 1f;
                 pl.Hero.Damage(GameConfig.EaterHeroDamage);
                 Vector3 push = pl.transform.position - pos;
                 push.y = 0f;
@@ -593,14 +657,53 @@ namespace PokaGoryu
             if (pl != null) ProcAudio.OneShot(pl.Sfx, "shadedie", 0.6f, Random.Range(0.9f, 1.1f));
             TimedFx.Spawn(Center, 0.5f, 3f, new Color(0.7f, 0.8f, 1f, 0.6f), 0.3f);
             All.Remove(this);
-            Destroy(gameObject);
+            Collapse();
         }
+
+        /// <summary>Убитый враг исчезает не мгновенно: тело оседает и тает за полсекунды (логика уже отключена, из списка он вынут).</summary>
+        void Collapse()
+        {
+            AudioSource[] sources = GetComponents<AudioSource>();
+            for (int i = 0; i < sources.Length; i++) sources[i].Stop();
+            if (rig == null)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            gameObject.AddComponent<EnemyCorpse>().Init(rig);
+        }
+
+        /// <summary>Для стенда: принудительно показать позу нападения (иначе она включается, только когда есть цель в досягаемости).</summary>
+        public bool DebugAttack;
+
+        /// <summary>Для стенда: как будто враг только что укусил.</summary>
+        public void DebugBite() { biteT = 1f; }
 
         void Remove()
         {
             dead = true;
             All.Remove(this);
             Destroy(gameObject);
+        }
+    }
+
+    /// <summary>Тело убитого врага: за полсекунды оседает, растекается и пропадает вместе с объектом.</summary>
+    public sealed class EnemyCorpse : MonoBehaviour
+    {
+        EnemyRig rig;
+        float t;
+
+        public void Init(EnemyRig r)
+        {
+            rig = r;
+        }
+
+        void Update()
+        {
+            t += Time.unscaledDeltaTime;   // доигрывает и на паузе: иначе осевшее тело повисло бы в кадре
+            float u = Mathf.Clamp01(t / 0.5f);
+            if (rig != null) rig.Collapse(u);
+            if (u >= 1f) Destroy(gameObject);
         }
     }
 }

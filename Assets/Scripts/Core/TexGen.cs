@@ -3,7 +3,7 @@ using UnityEngine;
 namespace PokaGoryu
 {
     /// <summary>
-    /// Процедурные текстуры мира и врагов (арта в проекте нет). Всё считается кодом при старте и быстро: крупные поля шума
+    /// Процедурные текстуры мира (арта в проекте нет; враги — меши из EnemyModels). Всё считается кодом при старте и быстро: крупные поля шума
     /// считаются один раз на маленькой сетке и читаются билинейно, а не по шуму на каждый пиксель.
     /// Фасады 512x512 (на 24 м стены): кирпич, штукатурка, панели, гофра; окна — целые, разбитые, заколоченные, с занавесками
     /// или пустые; подоконники, перемычки, потёки, трещины. Света в окнах нет совсем: альфа-канал фасада пуст.
@@ -20,9 +20,6 @@ namespace PokaGoryu
             Gfx.TexAsphalt = Asphalt();
             Gfx.TexPavement = Pavement();
             Gfx.TexGrass = Grass();
-            Gfx.TexShade = Shade();
-            Gfx.TexSnuffer = Snuffer();
-            Gfx.TexEater = Eater();
         }
 
         // ------------------------------------------------------------------ помощники
@@ -52,18 +49,6 @@ namespace PokaGoryu
             float dx = px - (ax + abx * t);
             float dy = py - (ay + aby * t);
             return Mathf.Sqrt(dx * dx + dy * dy);
-        }
-
-        static float SdCapsule(float px, float py, float ax, float ay, float bx, float by, float r)
-        {
-            return SegDist(px, py, ax, ay, bx, by) - r;
-        }
-
-        static float SdEllipse(float px, float py, float cx, float cy, float rx, float ry)
-        {
-            float dx = (px - cx) / rx;
-            float dy = (py - cy) / ry;
-            return (Mathf.Sqrt(dx * dx + dy * dy) - 1f) * Mathf.Min(rx, ry);
         }
 
         static Texture2D Make(int w, int h, Color32[] px, bool mips, TextureWrapMode wrap, int aniso, bool noLongerReadable)
@@ -461,210 +446,6 @@ namespace PokaGoryu
                 }
             }
             return Make(S, S, px, true, TextureWrapMode.Repeat, 4, true);
-        }
-
-        // ------------------------------------------------------------------ враги (2D-спрайты)
-
-        /// <summary>Тень: ссутулившийся силуэт в рваном плаще с капюшоном, длинными руками и бледными глазами.</summary>
-        static Texture2D Shade()
-        {
-            const int W = 128;
-            const int H = 192;
-            int seed = 900;
-            Color32[] px = new Color32[W * H];
-            for (int y = 0; y < H; y++)
-            {
-                for (int x = 0; x < W; x++)
-                {
-                    float fx = x + 0.5f;
-                    float fy = y + 0.5f;
-                    float n1 = Noise.Value(fx * 0.09f, fy * 0.09f, seed) - 0.5f;
-                    float n2 = Noise.Value(fx * 0.31f, fy * 0.31f, seed + 3) - 0.5f;
-
-                    // силуэт: капюшон, плащ с рваным подолом, длинные руки с пальцами
-                    float sd = SdEllipse(fx, fy, 64f, 150f, 22f, 27f);
-                    sd = Mathf.Min(sd, SdEllipse(fx, fy, 64f, 172f, 9f, 13f));
-                    float hw = Mathf.Lerp(54f, 26f, Mathf.Clamp01((fy - 14f) / 120f));
-                    float hem = 16f + 14f * Noise.Value(fx * 0.12f, 2.5f, seed + 9) + 7f * Mathf.Abs(Mathf.Sin(fx * 0.55f));
-                    float body = Mathf.Max(Mathf.Max(Mathf.Abs(fx - 64f) - hw, hem - fy), fy - 136f);
-                    sd = Mathf.Min(sd, body);
-                    for (int side = 0; side < 2; side++)
-                    {
-                        float sx = side == 0 ? fx : 128f - fx;
-                        float arm = SdCapsule(sx, fy, 38f, 128f, 22f, 92f, 6.5f);
-                        arm = Mathf.Min(arm, SdCapsule(sx, fy, 22f, 92f, 12f, 54f, 4.4f));
-                        arm = Mathf.Min(arm, SdCapsule(sx, fy, 12f, 54f, 5f, 36f, 1.7f));
-                        arm = Mathf.Min(arm, SdCapsule(sx, fy, 12f, 54f, 11f, 33f, 1.7f));
-                        arm = Mathf.Min(arm, SdCapsule(sx, fy, 12f, 54f, 18f, 35f, 1.7f));
-                        sd = Mathf.Min(sd, arm);
-                    }
-                    sd += n1 * 5f + n2 * 1.6f;
-
-                    float a = Mathf.Clamp01(0.5f - sd / 1.3f);
-                    // дым у подола и по краям
-                    float smoke = Smooth(10f, 70f, fy) * 0.55f + 0.45f;
-                    a *= Mathf.Lerp(smoke, 1f, Smooth(-6f, -1f, sd));
-
-                    // складки плаща и боковой блик; чем глубже внутрь, тем темнее
-                    float fold = 0.5f + 0.5f * Mathf.Sin((fx - 64f) * 0.42f + n1 * 6f);
-                    float depth = Smooth(0f, 14f, -sd);
-                    float rim = (1f - depth) * (fx > 64f ? 1f : 0.35f);
-                    float rr = 5f + fold * 3f + rim * 20f;
-                    float gg = 6f + fold * 3f + rim * 28f;
-                    float bb = 12f + fold * 4f + rim * 46f;
-
-                    // пустота капюшона и глаза
-                    float hollow = SdEllipse(fx, fy, 64f, 148f, 13f, 15f);
-                    if (hollow < 0f) { rr = 1f; gg = 1f; bb = 3f; }
-                    float e1 = SdEllipse(fx, fy, 57f, 150f, 4.4f, 2.4f);
-                    float e2 = SdEllipse(fx, fy, 71f, 150f, 4.4f, 2.4f);
-                    float eye = Mathf.Min(e1, e2);
-                    if (eye < 0f) { rr = 215f; gg = 245f; bb = 255f; a = 1f; }
-                    else if (eye < 9f)
-                    {
-                        float glow = (1f - eye / 9f);
-                        glow *= glow;
-                        rr = Mathf.Lerp(rr, 120f, glow); gg = Mathf.Lerp(gg, 200f, glow); bb = Mathf.Lerp(bb, 230f, glow);
-                        a = Mathf.Max(a, glow * 0.7f);
-                    }
-                    px[y * W + x] = C(rr, gg, bb, a * 255f);
-                }
-            }
-            return Make(W, H, px, true, TextureWrapMode.Clamp, 1, true);
-        }
-
-        /// <summary>Гаситель: колючий дымный шар с раскалённым красным ядром и летящими искрами.</summary>
-        static Texture2D Snuffer()
-        {
-            const int S = 96;
-            int seed = 950;
-            Color32[] px = new Color32[S * S];
-            for (int y = 0; y < S; y++)
-            {
-                for (int x = 0; x < S; x++)
-                {
-                    float dx = (x + 0.5f) / S * 2f - 1f;
-                    float dy = (y + 0.5f) / S * 2f - 1f;
-                    float r = Mathf.Sqrt(dx * dx + dy * dy);
-                    float ang = Mathf.Atan2(dy, dx);
-                    float spikes = Mathf.Pow(Mathf.Abs(Mathf.Sin(ang * 5.5f + 0.6f)), 2.2f);
-                    float nz = Noise.Value(Mathf.Cos(ang) * 2f + 3f, Mathf.Sin(ang) * 2f + 3f, seed) - 0.5f;
-                    float edge = 0.36f + 0.22f * spikes + 0.07f * nz + 0.025f * Mathf.Sin(r * 18f);
-                    float a = Mathf.Clamp01((edge - r) / 0.04f + 0.5f);
-
-                    // тёмный дымный шар и ядро: белое пятно, розовое, красное, угольное
-                    float rr = 7f, gg = 5f, bb = 9f;
-                    float core = 1f - Smooth(0.0f, 0.30f, r);
-                    float hot = 1f - Smooth(0.0f, 0.12f, r);
-                    rr = Mathf.Lerp(rr, 200f, core); gg = Mathf.Lerp(gg, 40f, core); bb = Mathf.Lerp(bb, 70f, core);
-                    rr = Mathf.Lerp(rr, 255f, hot); gg = Mathf.Lerp(gg, 210f, hot); bb = Mathf.Lerp(bb, 225f, hot);
-                    float halo = Smooth(0.30f, 0.6f, r) * Smooth(0.9f, 0.5f, r) * 0.25f;
-                    rr += 30f * halo; gg += 6f * halo;
-                    if (core > 0.01f) a = Mathf.Max(a, core);
-
-                    // искры
-                    float spark = Noise.Hash(x >> 1, y >> 1, seed + 3);
-                    if (r > edge && r < 0.95f && spark > 0.985f) { rr = 255f; gg = 120f; bb = 60f; a = 0.9f; }
-                    px[y * S + x] = C(rr, gg, bb, a * 255f);
-                }
-            }
-            return Make(S, S, px, true, TextureWrapMode.Clamp, 1, true);
-        }
-
-        static readonly float[] EyeX = { 84f, 172f, 128f, 58f, 198f, 128f };
-        static readonly float[] EyeY = { 236f, 236f, 262f, 196f, 196f, 206f };
-        static readonly float[] EyeRx = { 16f, 16f, 8f, 6f, 6f, 5f };
-        static readonly float[] EyeRy = { 11f, 11f, 6f, 5f, 5f, 4f };
-
-        /// <summary>Пожиратель: туша с пастью, рядами зубов, языком, щупальцами и россыпью бледных глаз.</summary>
-        static Texture2D Eater()
-        {
-            const int W = 256;
-            const int H = 320;
-            int seed = 980;
-            Color32[] px = new Color32[W * H];
-            for (int y = 0; y < H; y++)
-            {
-                for (int x = 0; x < W; x++)
-                {
-                    float fx = x + 0.5f;
-                    float fy = y + 0.5f;
-                    float n1 = Noise.Value(fx * 0.05f, fy * 0.05f, seed) - 0.5f;
-                    float n2 = Noise.Value(fx * 0.18f, fy * 0.18f, seed + 2) - 0.5f;
-
-                    // силуэт: тело-капля, широкая голова, щупальца
-                    float sd = SdEllipse(fx, fy, 128f, 150f, 118f, 138f);
-                    sd = Mathf.Min(sd, SdEllipse(fx, fy, 128f, 232f, 80f, 70f));
-                    for (int side = 0; side < 2; side++)
-                    {
-                        float sx = side == 0 ? fx : 256f - fx;
-                        sd = Mathf.Min(sd, SdCapsule(sx, fy, 40f, 130f, 16f, 60f, 13f));
-                        sd = Mathf.Min(sd, SdCapsule(sx, fy, 16f, 60f, 24f, 14f, 8f));
-                        sd = Mathf.Min(sd, SdCapsule(sx, fy, 76f, 30f, 60f, 8f, 10f));
-                    }
-                    sd += n1 * 14f + n2 * 3f;
-                    float a = Mathf.Clamp01(0.5f - sd / 1.5f);
-                    if (a <= 0f)
-                    {
-                        px[y * W + x] = C(0f, 0f, 0f, 0f);
-                        continue;
-                    }
-
-                    // кожа: тёмно-фиолетовая, складчатая, с влажными бликами
-                    float ridge = Mathf.Abs(Noise.Value(fx * 0.045f, fy * 0.09f, seed + 5) - 0.5f);
-                    float skin = 1f + (ridge < 0.05f ? 1.6f : 0f) + 0.6f * n2;
-                    float rr = 9f * skin, gg = 5f * skin, bb = 14f * skin;
-                    float depth = Smooth(0f, 30f, -sd);
-                    rr *= 0.55f + 0.45f * depth; gg *= 0.55f + 0.45f * depth; bb *= 0.55f + 0.45f * depth;
-                    if (Noise.Hash(x, y, seed + 8) > 0.9975f) { rr = 90f; gg = 80f; bb = 110f; }   // блики слизи
-
-                    // пасть
-                    float mouth = SdEllipse(fx, fy, 128f, 112f, 84f, 40f);
-                    if (mouth < 0f)
-                    {
-                        float inner = Smooth(0f, 40f, -mouth);
-                        rr = Mathf.Lerp(120f, 26f, inner); gg = Mathf.Lerp(12f, 2f, inner); bb = Mathf.Lerp(22f, 8f, inner);
-                        // язык
-                        float tongue = SdEllipse(fx, fy, 128f, 92f, 38f, 16f);
-                        if (tongue < 0f) { rr = 150f; gg = 40f; bb = 60f; }
-                        // зубы сверху и снизу
-                        float tx = Mathf.Abs(Mathf.Sin(fx * 0.34f + 0.7f));
-                        float topLen = 26f * tx;
-                        float botLen = 20f * Mathf.Abs(Mathf.Sin(fx * 0.30f + 2.0f));
-                        float cy = 112f;
-                        if (fy > cy + 40f * Mathf.Sqrt(Mathf.Max(0f, 1f - ((fx - 128f) / 84f) * ((fx - 128f) / 84f))) - topLen)
-                        {
-                            rr = 224f; gg = 218f; bb = 200f;
-                        }
-                        if (fy < cy - 40f * Mathf.Sqrt(Mathf.Max(0f, 1f - ((fx - 128f) / 84f) * ((fx - 128f) / 84f))) + botLen)
-                        {
-                            rr = 214f; gg = 208f; bb = 190f;
-                        }
-                    }
-
-                    // глаза: два больших и россыпь маленьких, зрачок-щель
-                    float eyeD = 999f;
-                    int eyeK = 0;
-                    for (int k = 0; k < EyeX.Length; k++)
-                    {
-                        float dk = SdEllipse(fx, fy, EyeX[k], EyeY[k], EyeRx[k], EyeRy[k]);
-                        if (dk < eyeD) { eyeD = dk; eyeK = k; }
-                    }
-                    if (eyeD < 0f)
-                    {
-                        rr = 238f; gg = 236f; bb = 196f;
-                        if (Mathf.Abs(fx - EyeX[eyeK]) < EyeRx[eyeK] * 0.2f) { rr = 20f; gg = 10f; bb = 6f; }
-                    }
-                    else if (eyeD < 8f)
-                    {
-                        float glow = 1f - eyeD / 8f;
-                        glow *= glow;
-                        rr = Mathf.Lerp(rr, 170f, glow * 0.6f); gg = Mathf.Lerp(gg, 160f, glow * 0.6f); bb = Mathf.Lerp(bb, 110f, glow * 0.6f);
-                    }
-                    px[y * W + x] = C(rr, gg, bb, a * 255f);
-                }
-            }
-            return Make(W, H, px, true, TextureWrapMode.Clamp, 1, true);
         }
     }
 }

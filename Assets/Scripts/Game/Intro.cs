@@ -120,7 +120,7 @@ namespace PokaGoryu
 
         static readonly HKey[] KeysL =
         {
-            new HKey(12.0f, new Vector3(Kitchen.MugRest.x - 0.075f, Kitchen.TableTop + 0.07f, Kitchen.MugRest.z), new Vector3(0f, 0.15f, 1f), new Vector3(-1f, 0f, 0f), 0.42f),
+            new HKey(12.0f, new Vector3(Kitchen.MugRest.x - 0.085f, Kitchen.TableTop + 0.07f, Kitchen.MugRest.z), new Vector3(0f, 0.15f, 1f), new Vector3(-1f, 0f, 0f), 0.42f),
             new HKey(13.4f, new Vector3(-0.16f, 0.81f, 0.22f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.6f),
             new HKey(22.0f, new Vector3(-0.16f, 0.81f, 0.22f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.6f),
             new HKey(23.8f, new Vector3(-0.17f, 1.06f, 0.05f), new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f), 0.95f),
@@ -129,15 +129,18 @@ namespace PokaGoryu
 
         static readonly HKey[] KeysR =
         {
-            new HKey(12.0f, new Vector3(Kitchen.MugRest.x + 0.080f, Kitchen.TableTop + 0.07f, Kitchen.MugRest.z), new Vector3(0f, 0.15f, 1f), new Vector3(1f, 0f, 0f), 0.42f),
-            new HKey(13.4f, new Vector3(0.12f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.6f),
-            new HKey(16.0f, new Vector3(0.12f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.6f),
+            new HKey(12.0f, new Vector3(Kitchen.MugRest.x + 0.125f, Kitchen.TableTop + 0.07f, Kitchen.MugRest.z), new Vector3(0f, 0.15f, 1f), new Vector3(1f, 0f, 0f), 0.42f),
+            new HKey(13.4f, new Vector3(0.15f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.6f),   // справа от ручки: ладонь (0,09 м шириной) не лежит на ней
+            new HKey(16.0f, new Vector3(0.15f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.6f),
             new HKey(19.2f, new Vector3(0.32f, 1.04f, 0.25f), new Vector3(0f, -0.25f, 1f), new Vector3(0f, 1f, 0f), 0.9f),
             new HKey(19.6f, new Vector3(0.32f, 1.04f, 0.25f), new Vector3(0f, -0.25f, 1f), new Vector3(0f, 1f, 0f), 0.9f),
             new HKey(20.3f, new Vector3(0.16f, 1.12f, 0.02f), new Vector3(0f, 1f, -0.15f), new Vector3(0f, 0f, 1f), 1.0f),
             new HKey(24.0f, new Vector3(0.15f, 1.08f, 0.06f), new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f), 0.95f),
             new HKey(60.0f, new Vector3(0.15f, 1.08f, 0.06f), new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f), 0.95f)
         };
+
+        /// <summary>Сдвиг плеч героя за столом (пространство тела, м): корпус наклонён вперёд, чтобы рука была согнута в локте.</summary>
+        static readonly Vector3 IntroLean = new Vector3(0f, -0.02f, 0.10f);
 
         class Mote
         {
@@ -228,6 +231,7 @@ namespace PokaGoryu
             body.HideBody = true;
             body.OverrideW = 1f;
             body.ArmScale = 0.72f;
+            body.HandObstacle = kitchen.MugPush;   // кисти не проходят сквозь кружку и её ручку
 
             // свет кухни
             lampLight = new IntroLight { Pos = kitchen.World(Kitchen.LampPos), Radius = 8.5f, Intensity = 1.0f, Col = new Color(1f, 0.80f, 0.52f, 1f) };
@@ -303,6 +307,8 @@ namespace PokaGoryu
             if (body != null)
             {
                 body.OverrideW = 0f;
+                body.ShoulderShift = Vector3.zero;
+                body.HandObstacle = null;
                 body.HideBody = false;
                 body.ArmScale = 1f;
                 body.SetSkinTone(1f);
@@ -580,10 +586,11 @@ namespace PokaGoryu
                 if (x < 12.0f)
                 {
                     // держат кружку: ладони по бокам
-                    Vector3 mugC = mugBottom + new Vector3(0f, 0.07f, 0f);
-                    p = mugC + new Vector3(a == 0 ? -0.075f : 0.080f, 0f, 0f);
+                    Vector3 mugC = mugBottom + new Vector3(0f, 0.055f, 0f);
+                    // левая ладонь у корпуса; правая снаружи ручки (она справа: 0,098 м от оси), а не в ней
+                    p = mugC + new Vector3(a == 0 ? -0.085f : 0.125f, 0f, 0f);
                     r = Quaternion.LookRotation(new Vector3(0f, 0.15f, 1f), new Vector3(a == 0 ? -1f : 1f, 0f, 0f));
-                    o = 0.42f;
+                    o = 0.52f;
                 }
                 else
                 {
@@ -595,6 +602,9 @@ namespace PokaGoryu
                 body.OverrideOpen[a] = o;
             }
             body.OverrideW = 1f - S(30.5f, 36.5f, x);
+            // герой подался к столу: кисти на столе в 0,6 м от плеч, прямая рука была бы палкой; к свече тянется, наклоняясь вправо и вперёд
+            float reachCandle = S(18.4f, 19.2f, x) * (1f - S(19.8f, 20.6f, x));
+            body.ShoulderShift = IntroLean + new Vector3(0.02f, -0.02f, 0.08f) * reachCandle;
             // в тёмной кухне кожа светлее, иначе руки чёрные; когда рука засветилась сама, возвращаем обычный тон
             body.SetSkinTone(Mathf.Lerp(1.7f, 1.0f, S(TBurn + 1.0f, TBurn + 4.5f, x)));
 

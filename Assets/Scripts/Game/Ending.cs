@@ -82,21 +82,21 @@ namespace PokaGoryu
             new HKey(5.6f, new Vector3(-0.16f, 0.81f, 0.22f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.60f),
             new HKey(6.8f, new Vector3(-0.17f, 1.06f, 0.05f), new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f), 0.95f),
             new HKey(8.6f, new Vector3(-0.17f, 1.06f, 0.05f), new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f), 0.95f),
-            new HKey(9.8f, new Vector3(-0.15f, 0.68f, -0.30f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f),
-            new HKey(40.0f, new Vector3(-0.15f, 0.68f, -0.30f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f)
+            new HKey(9.8f, new Vector3(-0.17f, 0.62f, -0.10f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f),
+            new HKey(40.0f, new Vector3(-0.17f, 0.62f, -0.10f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f)
         };
 
         static readonly HKey[] KeysR =
         {
             new HKey(0.0f, new Vector3(-0.28f, 0.80f, 0.42f), new Vector3(0.5f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.30f),
             new HKey(1.2f, new Vector3(-0.28f, 0.80f, 0.42f), new Vector3(0.5f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.30f),
-            new HKey(1.7f, new Vector3(0.00f, 0.92f, 0.20f), new Vector3(0f, 0.1f, 1f), new Vector3(0f, 1f, 0f), 0.80f),
-            new HKey(2.6f, new Vector3(0.12f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.60f),
-            new HKey(5.6f, new Vector3(0.12f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.60f),
+            new HKey(1.7f, new Vector3(0.17f, 0.93f, 0.26f), new Vector3(0f, 0.1f, 1f), new Vector3(0f, 1f, 0f), 0.80f),   // правая рука идёт на стол ЗА кружкой и справа от ручки, а не над самой кружкой
+            new HKey(2.6f, new Vector3(0.15f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.60f),
+            new HKey(5.6f, new Vector3(0.15f, 0.81f, 0.20f), new Vector3(0f, -0.05f, 1f), new Vector3(0f, 1f, 0f), 0.60f),
             new HKey(6.8f, new Vector3(0.15f, 1.08f, 0.06f), new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f), 0.95f),
             new HKey(8.6f, new Vector3(0.15f, 1.08f, 0.06f), new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f), 0.95f),
-            new HKey(9.8f, new Vector3(0.15f, 0.68f, -0.30f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f),
-            new HKey(40.0f, new Vector3(0.15f, 0.68f, -0.30f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f)
+            new HKey(9.8f, new Vector3(0.17f, 0.62f, -0.10f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f),
+            new HKey(40.0f, new Vector3(0.17f, 0.62f, -0.10f), new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, 0f), 0.40f)
         };
 
         // ------------------------------------------------------------------ состояние
@@ -241,6 +241,8 @@ namespace PokaGoryu
             if (body != null)
             {
                 body.OverrideW = 0f;
+                body.ShoulderShift = Vector3.zero;
+                body.HandObstacle = null;
                 body.HideBody = false;
                 body.ArmScale = 1f;
                 body.SetSkinTone(1f);
@@ -346,6 +348,8 @@ namespace PokaGoryu
         public int DarkPuffsDrawn { get { return ride != null ? ride.DarkPuffsDrawn : 0; } }
         public int CabinPuffsDrawn { get { return ride != null ? ride.CabinPuffsDrawn : 0; } }
         public bool HasDriver { get { return ride != null && ride.HasDriver; } }
+        /// <summary>Для автотестов: расстояние от водителя до ближайшего жителя в салоне, м.</summary>
+        public float DriverClearance { get { return ride != null ? ride.DriverClearance() : 9f; } }
 
         /// <summary>Пропустить концовку: короткое затемнение и экран итога.</summary>
         public void Skip()
@@ -446,6 +450,8 @@ namespace PokaGoryu
         void EnterRide()
         {
             stage = 0;
+            body.SnapPose();
+            body.HandObstacle = null;   // в автобусе кружки нет
             if (ride != null) ride.SetDarknessVisible(true);
             if (kitchen != null) kitchen.Root.gameObject.SetActive(false);
             body.ArmScale = 0.8f;
@@ -464,6 +470,8 @@ namespace PokaGoryu
             // автобус и поездка остаются позади: герой за кухонным столом, как в самом начале
             if (ride != null) ride.SetDarknessVisible(false);
             ResetPostLook();
+            body.SnapPose();   // склейка: герой уже за столом, руки в позе сна, а не летят к ней от колен в автобусе
+            body.HandObstacle = kitchen.MugPush;   // кисти не проходят сквозь кружку и её ручку
             if (engineSrc != null) engineSrc.Stop();
             kitchen.Root.gameObject.SetActive(true);
             kitchen.SetCity(-9999f, 0f);   // утро: окна города не светятся
@@ -504,7 +512,8 @@ namespace PokaGoryu
 
             ApplyRideSky(t, bp.z);
 
-            // руки лежат на коленях
+            // руки лежат на коленях (сидит откинувшись: плечи на месте)
+            body.ShoulderShift = Vector3.zero;
             for (int a = 0; a < 2; a++)
             {
                 Vector3 p = headBase + new Vector3(a == 0 ? -0.22f : 0.20f, -0.66f, 0.40f);
@@ -685,6 +694,9 @@ namespace PokaGoryu
             pc.Head.localRotation = Quaternion.Euler(pit, yaw, roll);
 
             // ---- руки
+            // корпус идёт за головой: пока щека лежит на руках (голова далеко вперёд и вниз), плечи тоже подались к столу;
+            // когда руки легли на колени, он выпрямился (иначе плечи слишком близко к кистям и рука складывается вдвое)
+            body.ShoulderShift = new Vector3(0f, -0.02f, 0.10f) * (1f - S(8.0f, 10.0f, k)) + off * 0.7f;
             for (int a = 0; a < 2; a++)
             {
                 Vector3 p;

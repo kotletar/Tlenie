@@ -431,12 +431,25 @@ namespace PokaGoryu
             Check(music.FinalTrackActive && music.FinalTrackLevel > 0.9f && music.FinalTrackTime > 1.5f && music.FinalTrackTime < 4.5f,
                 "the real final-minute track plays with the final stand and keeps up with it (" + music.FinalTrackTime.ToString("0.0") + " s in)");
             GameSettings.Apply();   // вернуть громкость
+            Bus.Instance.BoardedCount = 6;   // в салоне полный набор жителей: иначе проверки водителя и его соседей были бы пустыми
             Bus.Instance.FinalLeft = 0.05f;
             yield return new WaitForSecondsRealtime(1.2f);
             Check(gm.State == GameState.Ending && gm.Ending.Active && Bus.Instance.Scripted, "the bus leaving with the people starts the ending");
             Vector3 busSeat = Bus.Instance.transform.position + RideStage.SeatEye;
             Check(Vector3.Distance(gm.Player.Cam.transform.position, busSeat) < 0.6f && Bus.Instance.transform.position.z > Bus.Instance.StartPos.z,
                 "ending: the camera rides inside the moving bus");
+            // Обратная кинематика руки: две кости постоянной длины, сгиб в сторону подсказки (вниз и наружу)
+            {
+                Vector3 s = new Vector3(-0.25f, 1.37f, 0f);
+                Vector3 w = new Vector3(-0.2f, 1.2f, 0.5f);
+                Vector3 pole = new Vector3(-0.55f, -1f, -0.45f);
+                Vector3 e = HeroBody.SolveElbow(s, w, HeroBody.UpperLen, HeroBody.ForeLen, pole);
+                bool lengths = Mathf.Abs((e - s).magnitude - HeroBody.UpperLen) < 0.002f && Mathf.Abs((w - e).magnitude - HeroBody.ForeLen) < 0.002f;
+                bool bendSide = Vector3.Dot(e - (s + w) * 0.5f, pole) > 0.05f;
+                Vector3 far = HeroBody.SolveElbow(s, s + new Vector3(0f, 0f, 1.2f), HeroBody.UpperLen, HeroBody.ForeLen, pole);   // дальше вытянутой руки
+                bool straight = Vector3.Angle(s - far, new Vector3(0f, 0f, 1.2f) - far + s) > 160f && !float.IsNaN(far.x);
+                Check(lengths && bendSide && straight, "the arm solver keeps the bone lengths, bends towards the pole and stretches straight when the wrist is out of reach");
+            }
             // Поворот кистей между «ладонью вниз» и «ладонью к лицу»: правая ладонь идёт влево, левая вправо (тыл смотрит наружу), без выворота.
             {
                 Quaternion palmDown = Quaternion.LookRotation(new Vector3(0f, -0.05f, 1f), Vector3.up);
@@ -460,6 +473,8 @@ namespace PokaGoryu
             yield return new WaitForSecondsRealtime(0.3f);
             Check(gm.Ending.DarknessVisible, "ending: the dawn ahead turns out to be the Darkness");
             Check(gm.Ending.HasDriver, "ending: a driver sits at the wheel of the bus");
+            Check(gm.Ending.DriverClearance > 1.5f && gm.Ending.DriverClearance < 8f,
+                "ending: six residents ride and nobody sits right behind the driver (nearest resident " + gm.Ending.DriverClearance.ToString("0.0") + " m)");
             // Тьма — объёмный дым, который надвигается на автобус и накрывает его, а потом просачивается в салон
             gm.Ending.DebugSeek(14.2f);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -474,6 +489,45 @@ namespace PokaGoryu
                 "ending: the hero wakes up at the kitchen table");
             Check(gm.Ending.MugClearance() > 0.12f && gm.Ending.TableClearance() > 0.1f,
                 "ending: the sleeping head rests beside the coffee mug, never in it (clearance " + gm.Ending.MugClearance().ToString("0.00") + " m)");
+            // Руки в кат-сцене: две кости постоянной длины и согнутый локоть (не палка и не рука, сложенная вдвое): ладони подняты, руки на коленях
+            for (int armPose = 0; armPose < 2; armPose++)
+            {
+                gm.Ending.DebugSeek(EndingDirector.TKitchen + (armPose == 0 ? 7.5f : 11.5f));
+                yield return new WaitForSecondsRealtime(0.6f);
+                bool bonesOk = true;
+                bool bentOk = true;
+                string armText = "";
+                for (int a = 0; a < 2; a++)
+                {
+                    Vector3 shoulderPos, elbowPos, wristPos;
+                    gm.Player.Body.GetArm(a, out shoulderPos, out elbowPos, out wristPos);
+                    float upperLen = (elbowPos - shoulderPos).magnitude;
+                    float foreLen = (wristPos - elbowPos).magnitude;
+                    float elbowAngle = Vector3.Angle(shoulderPos - elbowPos, wristPos - elbowPos);
+                    bonesOk &= Mathf.Abs(upperLen - HeroBody.UpperLen) < 0.01f && Mathf.Abs(foreLen - HeroBody.ForeLen) < 0.01f;
+                    bentOk &= elbowAngle > 60f && elbowAngle < 150f;
+                    armText += (a == 0 ? " L " : " R ") + upperLen.ToString("0.00") + "+" + foreLen.ToString("0.00") + " m, " + elbowAngle.ToString("0") + " deg;";
+                }
+                Check(bonesOk && bentOk, "ending: the arms bend at the elbow with constant bone lengths (" + (armPose == 0 ? "palms raised" : "hands on the lap") + "):" + armText);
+            }
+            // Руки не проходят сквозь кружку и ручку: правая рука идёт на стол мимо них (в моменты, когда она рядом с кружкой)
+            {
+                float worstInside = 0f;
+                float mostPushed = 0f;
+                float[] mugMoments = { 1.8f, 2.2f, 2.6f, 4.0f };
+                for (int m = 0; m < mugMoments.Length; m++)
+                {
+                    gm.Ending.DebugSeek(EndingDirector.TKitchen + mugMoments[m]);
+                    yield return new WaitForSecondsRealtime(0.45f);
+                    for (int a = 0; a < 2; a++)
+                    {
+                        worstInside = Mathf.Max(worstInside, gm.Player.Body.HandPenetration(a));
+                        mostPushed = Mathf.Max(mostPushed, gm.Player.Body.GetHandPush(a).magnitude);
+                    }
+                }
+                Check(worstInside < 0.002f && mostPushed < 0.09f,
+                    "ending: hands never go through the mug or its handle (still inside by " + (worstInside * 1000f).ToString("0.0") + " mm, pushed out by at most " + (mostPushed * 100f).ToString("0.0") + " cm)");
+            }
             yield return Key(GKey.Space);
             yield return new WaitForSecondsRealtime(1.0f);
             Check(gm.State == GameState.Victory && !gm.Ending.Active && !gm.Intro.AcquireKitchen().Root.gameObject.activeSelf, "Space skips the ending to the result screen");
@@ -520,6 +574,30 @@ namespace PokaGoryu
             int afterOrbs = Resources.FindObjectsOfTypeAll<Material>().Length;
             Check(afterOrbs <= beforeOrbs, "50 discarded orbs release 100 native materials: " + beforeOrbs + " -> " + afterOrbs);
 
+            // Враги: 3D-тела из частей (не плоские спрайты); погибшие и убранные освобождают свои материалы (первый круг прогревает общие кеши)
+            Vector3 foeAt = NearbyFree(LevelBuilder.StartPos, 6f);
+            int[] foeParts = new int[3];
+            int foeBefore = 0;
+            for (int round = 0; round < 2; round++)
+            {
+                if (round == 1) foeBefore = Resources.FindObjectsOfTypeAll<Material>().Length;
+                for (int kind = 0; kind < 3; kind++)
+                {
+                    for (int n = 0; n < (kind == 0 ? 4 : 1); n++)
+                    {
+                        Enemy foe = Enemy.Spawn((EnemyKind)kind, foeAt);
+                        if (n == 0) foeParts[kind] = foe.BodyParts;
+                    }
+                }
+                yield return null;
+                Enemy.ClearAll();
+                yield return null; yield return null;
+            }
+            int foeAfter = Resources.FindObjectsOfTypeAll<Material>().Length;
+            Check(foeParts[0] >= 12 && foeParts[1] >= 10 && foeParts[2] >= 30,
+                "enemies are 3D bodies made of parts: shade " + foeParts[0] + ", snuffer " + foeParts[1] + ", eater " + foeParts[2]);
+            Check(foeAfter <= foeBefore, "enemy bodies release their own materials: " + foeBefore + " -> " + foeAfter);
+
             // Подсказки: строка с кнопками живёт до первого очага после старта, подсказка про Проводника — до его ручного вызова.
             yield return Key(GKey.Enter);
             yield return new WaitForSecondsRealtime(1.2f);
@@ -527,6 +605,35 @@ namespace PokaGoryu
             yield return new WaitForSecondsRealtime(3f);   // автовызов Проводника — через 2 с после старта
             Check(gm.State == GameState.Playing && gm.ControlHintsVisible, "new run shows the control hints strip");
             Check(GuideWisp.CooldownLeft > 0f && !GuideWisp.PlayerActivated, "automatic guide start does not count as the player's own");
+            // Враг смотрит, куда идёт: тело поворачивается по движению (оглушённого Тень не ведёт ИИ, двигаем её сами вдоль +X)
+            {
+                Vector3 shadeAt = NearbyFree(gm.Player.transform.position + new Vector3(0f, 0f, 9f), 3f);
+                Enemy shade = Enemy.Spawn(EnemyKind.Shade, shadeAt);
+                if (shade != null)
+                {
+                    shade.Stun(5f);
+                    float until = Time.realtimeSinceStartup + 0.9f;
+                    Vector3 mark = shade.transform.position;
+                    bool marked = false;
+                    while (Time.realtimeSinceStartup < until && shade != null)
+                    {
+                        shade.transform.position += new Vector3(3f * Time.deltaTime, 0f, 0f);
+                        // последняя четверть секунды: по ней считаем курс (в свете лампы Тень ещё и пятится сама, поэтому курс не строго +X)
+                        if (!marked && Time.realtimeSinceStartup > until - 0.25f) { mark = shade.transform.position; marked = true; }
+                        yield return null;
+                    }
+                    if (shade != null)
+                    {
+                        Vector3 heading = shade.transform.position - mark;
+                        heading.y = 0f;
+                        float facing = heading.magnitude > 0.2f ? Vector3.Dot(shade.transform.forward, heading.normalized) : -1f;
+                        Check(facing > 0.85f, "a shade turns its face the way it moves (cos " + facing.ToString("0.00") + ", moved " + heading.magnitude.ToString("0.0") + " m)");
+                    }
+                    else Check(false, "the test shade disappeared while it was moved");
+                }
+                else Check(false, "the test shade could not be spawned");
+                Enemy.ClearAll();
+            }
             int wokenBefore = gm.SurvivorsWoken;
             gm.SurvivorsWoken = 1;   // чтобы строка цели дошла до подсказки про Проводника
             Check(gm.ObjectiveText().Contains("G — Проводник"), "objective line mentions the guide until the player uses it");

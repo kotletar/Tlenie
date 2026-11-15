@@ -36,6 +36,12 @@ namespace PokaGoryu
         const float HandScale = 1.12f;
         const float MaxReach = 0.84f;
 
+        // Рука в сценариях (предыстория, концовка): две кости постоянной длины и локоть из обратной кинематики. В игре рука прежняя:
+        // плечо и предплечье тянутся под любое расстояние, а локоть сдвинут от середины на постоянную величину.
+        public const float UpperLen = 0.31f;     // плечо -> локоть
+        public const float ForeLen = 0.30f;      // локоть -> запястье (как предплечье в позе «часы»)
+        const float Protraction = 0.14f;         // насколько плечо может податься вперёд вслед за рукой (лопатка и ключица)
+
         /// <summary>Положение глаз в пространстве тела: вокруг этой точки поворачиваются руки при взгляде вверх и в отдаче.</summary>
         public static readonly Vector3 EyeLocal = new Vector3(0f, 1.62f, 0.16f);
 
@@ -63,6 +69,116 @@ namespace PokaGoryu
         public readonly float[] OverrideOpen = { 0.5f, 0.5f };
         public bool HideBody;
         public float ArmScale = 1f;     // толщина рук (в предыстории тоньше: кухня рядом с камерой)
+
+        /// <summary>
+        /// Сценарий наклоняет корпус к столу: плечи сдвигаются на этот вектор (пространство тела), пока руки подчиняются сценарию
+        /// (умножается на OverrideW). Без этого плечи стоят прямо, а кисти на столе лежат в 0,65-0,7 м от них: рука вытянута палкой.
+        /// </summary>
+        public Vector3 ShoulderShift;
+
+        /// <summary>
+        /// Препятствие для кистей в кат-сценах (кружка): по центру шара (мировые координаты) и радиусу возвращает вектор, на который шар
+        /// надо сдвинуть, чтобы он вышел из препятствия (ноль, если не касается). Пока задано и руки ведёт сценарий, кисть целиком
+        /// сдвигается так, чтобы ладонь, пальцы и запястье остались снаружи: рука не проходит сквозь кружку и её ручку. null — без препятствий.
+        /// </summary>
+        public System.Func<Vector3, float, Vector3> HandObstacle;
+
+        readonly Vector3[] handPush = new Vector3[2];
+
+        /// <summary>Последний сдвиг кисти из-за препятствия (пространство тела), для автотестов: большой скачок значит, что поза выбрана плохо.</summary>
+        public Vector3 GetHandPush(int a)
+        {
+            return handPush[a];
+        }
+
+        static readonly List<Vector3> obsPos = new List<Vector3>(48);
+        static readonly List<float> obsRad = new List<float>(48);
+
+        /// <summary>Точки кисти для столкновений: поверхность ладони (центр и углы клина), запястье, начало каждой фаланги и кончики пальцев.</summary>
+        void CollectHandSamples(HandRig h)
+        {
+            obsPos.Clear();
+            obsRad.Clear();
+            Transform r = h.Root;
+            float s = HandScale;
+            float face = -0.013f * s;   // плоскость ладони (-Y кисти)
+            AddObs(r.TransformPoint(new Vector3(0f, face, 0.005f)), 0.006f);
+            AddObs(r.TransformPoint(new Vector3(0.036f * s, face, 0.040f * s)), 0.006f);
+            AddObs(r.TransformPoint(new Vector3(-0.036f * s, face, 0.040f * s)), 0.006f);
+            AddObs(r.TransformPoint(new Vector3(0.026f * s, face, -0.034f * s)), 0.006f);
+            AddObs(r.TransformPoint(new Vector3(-0.026f * s, face, -0.034f * s)), 0.006f);
+            AddObs(r.TransformPoint(new Vector3(0f, 0f, -0.05f)), 0.022f);   // запястье: рука толще кисти
+            for (int i = 0; i < h.Fx.joints.Length; i++)
+            {
+                Transform t = h.Fx.joints[i].t;
+                float rad = 0.0085f * s;
+                AddObs(t.position, rad);
+                if (i == 13 || (i < 12 && i % 3 == 2)) AddObs(t.TransformPoint(new Vector3(0f, 0f, FingerLen[i] * s)), rad);
+            }
+        }
+
+        static void AddObs(Vector3 world, float radius)
+        {
+            obsPos.Add(world);
+            obsRad.Add(radius);
+        }
+
+        /// <summary>Для автотестов: насколько кисть всё ещё заходит в препятствие после выталкивания (м): самый большой сдвиг, который ещё потребовался бы одной из её точек.</summary>
+        public float HandPenetration(int a)
+        {
+            if (HandObstacle == null) return 0f;
+            CollectHandSamples(Hands[a]);
+            float worst = 0f;
+            for (int i = 0; i < obsPos.Count; i++) worst = Mathf.Max(worst, HandObstacle(obsPos[i], obsRad[i]).magnitude);
+            return worst;
+        }
+
+        /// <summary>Сдвиг кисти (пространство тела), при котором все её точки вне препятствия; несколько проходов: выход из одной точки может втолкнуть другую.</summary>
+        Vector3 ObstaclePush(HandRig h)
+        {
+            CollectHandSamples(h);
+            Vector3 total = Vector3.zero;
+            for (int pass = 0; pass < 3; pass++)
+            {
+                // по каждой оси берём самый большой из сдвигов точек (как при выталкивании коробки): результат не зависит от того, какая точка
+                // кисти на этом кадре оказалась «самой глубокой», а значит не прыгает, когда лидер меняется
+                Vector3 step = Vector3.zero;
+                for (int i = 0; i < obsPos.Count; i++)
+                {
+                    Vector3 p = HandObstacle(obsPos[i] + total, obsRad[i]);
+                    if (Mathf.Abs(p.x) > Mathf.Abs(step.x)) step.x = p.x;
+                    if (Mathf.Abs(p.y) > Mathf.Abs(step.y)) step.y = p.y;
+                    if (Mathf.Abs(p.z) > Mathf.Abs(step.z)) step.z = p.z;
+                }
+                if (step.sqrMagnitude < 1e-9f) break;
+                total += step;
+            }
+            return bodyRoot.InverseTransformVector(total);
+        }
+
+        bool snapPose;
+
+        /// <summary>
+        /// Сценарий сменил сцену (автобус -> кухня, герой переставлен): в следующем кадре кисти встают в позу сразу, без плавного
+        /// подтягивания от прежней (плечи при этом прыгают, и локти пролетели бы через полкомнаты).
+        /// </summary>
+        public void SnapPose()
+        {
+            snapPose = true;
+        }
+
+        // последняя поза руки (пространство тела): для автотестов и стенда
+        readonly Vector3[] armShoulder = new Vector3[2];
+        readonly Vector3[] armElbow = new Vector3[2];
+        readonly Vector3[] armWrist = new Vector3[2];
+
+        /// <summary>Плечо, локоть и запястье руки в последнем кадре (пространство тела). Индекс 0 — левая, 1 — правая.</summary>
+        public void GetArm(int a, out Vector3 shoulderPos, out Vector3 elbowPos, out Vector3 wristPos)
+        {
+            shoulderPos = armShoulder[a];
+            elbowPos = armElbow[a];
+            wristPos = armWrist[a];
+        }
 
         /// <summary>0..1: насколько поднята левая рука для взгляда на полоску здоровья (для автотестов и других систем).</summary>
         public float ArmRaise { get { return armRaise; } }
@@ -771,21 +887,51 @@ namespace PokaGoryu
                 // дыхание
                 pos.y += Mathf.Sin(Time.time * 1.6f + a) * 0.004f;
 
-                h.Pos = Vector3.Lerp(h.Pos, pos, 1f - Mathf.Exp(-14f * dt));
-                h.Rot = Quaternion.Slerp(h.Rot, rot, 1f - Mathf.Exp(-12f * dt));
-                h.Open = Mathf.Lerp(h.Open, open, 1f - Mathf.Exp(-12f * dt));
+                float followPos = snapPose ? 1f : 1f - Mathf.Exp(-14f * dt);
+                float followRot = snapPose ? 1f : 1f - Mathf.Exp(-12f * dt);
+                h.Pos = Vector3.Lerp(h.Pos, pos, followPos);
+                h.Rot = Quaternion.Slerp(h.Rot, rot, followRot);
+                h.Open = Mathf.Lerp(h.Open, open, followRot);
 
                 Vector3 pp = EyeLocal + pr * (h.Pos - EyeLocal);
                 Quaternion rr = pr * h.Rot;
-                Vector3 reach = pp - shoulder[a];
+                Vector3 shoulderNow = shoulder[a] + ShoulderShift * OverrideW;
+                Vector3 reach = pp - shoulderNow;
                 float maxReach = MaxReach + OverrideW * 0.25f;   // сценарий может тянуться чуть дальше, чем в игре
-                if (reach.magnitude > maxReach) pp = shoulder[a] + reach.normalized * maxReach;
+                if (reach.magnitude > maxReach) pp = shoulderNow + reach.normalized * maxReach;
 
                 // HandsRoot стоит в точке глаз и без поворота: локальные координаты кисти — смещение от глаз
                 h.Root.localPosition = pp - EyeLocal;
                 h.Root.localRotation = rr;
                 SetFingerBase(h, h.Open);
+
+                // кат-сцена: кисть не должна проходить сквозь кружку и ручку. Сдвиг растёт сразу (иначе кисть успела бы войти в кружку),
+                // а спадает плавно (отпустила кружку: рука не прыгает на прежнее место)
+                bool obstacles = HandObstacle != null && OverrideW > 0.5f;
+                Vector3 pushNow = obstacles ? ObstaclePush(h) : Vector3.zero;
+                Vector3 pushKept = handPush[a];
+                Vector3 applied = pushNow.sqrMagnitude >= pushKept.sqrMagnitude ? pushNow : Vector3.Lerp(pushKept, pushNow, 1f - Mathf.Exp(-14f * dt));
+                if (applied.sqrMagnitude > 1e-10f)
+                {
+                    pp += applied;
+                    h.Root.localPosition = pp - EyeLocal;
+                    if (obstacles)
+                    {
+                        // плавный спад мог не вывести кисть из препятствия (направление сменилось): доводим остаток сразу
+                        Vector3 extra = ObstaclePush(h);
+                        if (extra.sqrMagnitude > 1e-10f)
+                        {
+                            pp += extra;
+                            applied += extra;
+                            h.Root.localPosition = pp - EyeLocal;
+                        }
+                    }
+                }
+                else applied = Vector3.zero;
+                handPush[a] = applied;
             }
+
+            snapPose = false;
 
             // Лучи, шары, вспышка, отдача рук и раскрытие пальцев (PalmShot) — после того, как кисти заняли позу
             if (Combat != null) Combat.Tick(dt);
@@ -797,8 +943,23 @@ namespace PokaGoryu
 
                 // рука: плечо -> локоть -> запястье (после отдачи); сторона ладони задаёт, куда смотрит внутренняя сторона предплечья
                 Vector3 wrist = bodyRoot.InverseTransformPoint(h.Root.TransformPoint(new Vector3(0f, 0f, -0.05f)));
-                Vector3 mid = (shoulder[a] + wrist) * 0.5f;
+                Vector3 sh = shoulder[a] + ShoulderShift * OverrideW;
+                Vector3 mid = (sh + wrist) * 0.5f;
                 Vector3 elbow = mid + new Vector3(sx * 0.07f, -0.11f, -0.04f);
+                if (OverrideW > 0.001f)
+                {
+                    // сценарий: плечо подаётся вслед за далёкой рукой (не дальше Protraction), локоть — из двух костей постоянной длины,
+                    // сгиб вниз и наружу, как у расслабленной руки; на переходе в игру (OverrideW < 1) смешивается с прежним локтем
+                    Vector3 toWrist = wrist - sh;
+                    float over = toWrist.magnitude - (UpperLen + ForeLen) * 0.97f;
+                    Vector3 shReach = over > 0f ? sh + toWrist.normalized * Mathf.Min(over, Protraction) : sh;
+                    Vector3 ik = SolveElbow(shReach, wrist, UpperLen, ForeLen, new Vector3(sx * 0.55f, -1f, -0.45f));
+                    elbow = Vector3.Lerp(elbow, ik, OverrideW);
+                    sh = Vector3.Lerp(sh, shReach, OverrideW);
+                }
+                armShoulder[a] = sh;
+                armElbow[a] = elbow;
+                armWrist[a] = wrist;
                 if (a == 0 && checkW > 0.001f) elbow = Vector3.Lerp(elbow, checkElbow, checkW);   // «часы»: локоть выставлен вперёд, предплечье поперёк взгляда
                 Vector3 palmDir = bodyRoot.InverseTransformDirection(h.Root.TransformDirection(Vector3.down));
                 if (a == 0 && checkW > 0.001f)
@@ -807,7 +968,7 @@ namespace PokaGoryu
                     Vector3 toEye = (EyeLocal - (elbow + wrist) * 0.5f).normalized;
                     palmDir = Vector3.Slerp(palmDir, toEye, checkW);
                 }
-                PlaceSegment(upper[a], shoulder[a], elbow, Vector3.back, ArmScale);
+                PlaceSegment(upper[a], sh, elbow, Vector3.back, ArmScale);
                 PlaceSegment(fore[a], elbow, wrist, palmDir, ArmScale);
             }
 
@@ -817,6 +978,26 @@ namespace PokaGoryu
             legR.localRotation = Quaternion.Euler(-swing, 0f, 0f);
 
             UpdateArmDisplay(armRaise);
+        }
+
+        /// <summary>
+        /// Локоть руки из двух костей (длины l1 и l2) между плечом s и запястьем w: по теореме косинусов, сгиб — в сторону pole
+        /// (подсказка: вниз и наружу). Рука не разгибается дальше 99,8% длины: если запястье дальше, локоть почти на прямой, а
+        /// предплечье чуть тянется (сегменты ставит PlaceSegment по фактическим точкам). Если рука направлена вдоль pole, сгиб — наружу.
+        /// </summary>
+        public static Vector3 SolveElbow(Vector3 s, Vector3 w, float l1, float l2, Vector3 pole)
+        {
+            Vector3 d = w - s;
+            float dist = d.magnitude;
+            if (dist < 1e-4f) return s + pole.normalized * l1;
+            Vector3 dir = d / dist;
+            float reach = Mathf.Clamp(dist, Mathf.Abs(l1 - l2) + 0.01f, (l1 + l2) * 0.998f);
+            float along = (l1 * l1 - l2 * l2 + reach * reach) / (2f * reach);
+            float height = Mathf.Sqrt(Mathf.Max(0f, l1 * l1 - along * along));
+            Vector3 perp = pole - dir * Vector3.Dot(pole, dir);
+            if (perp.sqrMagnitude < 1e-4f) perp = new Vector3(pole.x, 0f, 0f) - dir * Vector3.Dot(new Vector3(pole.x, 0f, 0f), dir);
+            if (perp.sqrMagnitude < 1e-6f) perp = Vector3.Cross(dir, Vector3.forward);
+            return s + dir * along + perp.normalized * height;
         }
 
         /// <summary>

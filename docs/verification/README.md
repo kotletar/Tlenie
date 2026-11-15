@@ -57,6 +57,13 @@
 ./docs/verification/run_smoke.ps1 -Scenario endingride
 ./docs/verification/run_smoke.ps1 -Scenario handmotion_intro
 ./docs/verification/run_smoke.ps1 -Scenario handmotion_ending
+./docs/verification/run_smoke.ps1 -Scenario armscan_intro
+./docs/verification/run_smoke.ps1 -Scenario armscan_ending
+./docs/verification/run_smoke.ps1 -Scenario armrig_intro
+./docs/verification/run_smoke.ps1 -Scenario armrig_ending
+./docs/verification/run_smoke.ps1 -Scenario mugview_intro
+./docs/verification/run_smoke.ps1 -Scenario mugview_ending
+./docs/verification/run_smoke.ps1 -Scenario monsters
 ./docs/verification/run_smoke.ps1 -Scenario finalstand
 ./docs/verification/run_smoke.ps1 -Scenario finalpassive
 ./docs/verification/run_smoke.ps1 -Scenario handdetail
@@ -75,6 +82,18 @@
 Свои времена задаёт переменная окружения `PG_RIDE_TIMES="2.9,12.2,14.0"`. Затемнение экрана и субтитры рисует IMGUI, поэтому в этих
 кадрах их нет (они есть в `endingshot`). `handmotion_intro` и `handmotion_ending` снимают кисти каждые 8 кадров на каждом отрезке
 сценария: по контактным листам видно, в какую сторону поворачивается каждая кисть и нет ли выворотов.
+`armscan_intro` и `armscan_ending` проходят всю сцену в обычном времени (около 3000 кадров) и по телу руки считают в каждом кадре длины
+плеча и предплечья, угол в локте (180° — прямая рука) и скачок локтя; в конце итог по каждой руке и те же кисти на старой руке (плечо на
+месте, локоть смещён от середины) для сравнения. `armrig_intro` и `armrig_ending` ставят камеру не в глаза героя, а сбоку, сверху и спереди
+(кадры `v{поза}_{вид}_{время}`): так видно, где стоит локоть и как согнута рука, хотя из глаз он почти всегда за нижним краем кадра.
+`mugview_intro` и `mugview_ending` снимают кружку и кисти вплотную справа, слева, сверху и из глаз в моменты, когда рука рядом с кружкой
+(держат, несут ко рту, отпускают, толкаются от стола); `PG_NO_OBSTACLE=1` отключает выталкивание кистей из кружки, для сравнения «до».
+В отчёте сканера (`armscan_*`) после длин костей идёт «mug push»: сколько кадров кисть выталкивалась, на сколько сантиметров самое
+большее и самый резкий скачок между кадрами; рывки больше 2 см сканер выписывает строками «push jump» со временем.
+`monsters` ставит Тень, Гасителя и Пожирателя на самое широкое открытое место города (стоят на месте: оглушены, здоровье не убывает),
+снимает кадр с точки героя и по четыре ракурса каждого вплотную при вспомогательном свете у камеры (`w{номер}_{имя}_{вид}`), потом их
+в позе нападения (`a1..a3`), укус Пожирателя (`a4`) и гибель Тени (`a5_shade_collapse`); пасть Пожирателя вплотную в покое и открытая
+(`w4_eater_mouth_rest`, `w5_eater_mouth_open`: зубы и глотка, ничего не торчит изо рта); в отчёте число частей тела каждого.
 
 `finalstand` и `finalpassive` гонят последнюю минуту целиком (3600 кадров по 1/60 с, около минуты работы): герой стоит у двери
 автобуса, двигатель заведён. В первом герой умелый (аура на минимуме, огонь по Пожирателям и вплотную подошедшим Теням, осколки

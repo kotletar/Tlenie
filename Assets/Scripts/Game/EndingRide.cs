@@ -74,6 +74,21 @@ namespace PokaGoryu
         /// <summary>За рулём сидит водитель (для автотестов; первый в списке Passengers, гаснет первым).</summary>
         public bool HasDriver { get { return driver != null && Passengers.Count > 0 && Passengers[0] == driver; } }
 
+        /// <summary>Для автотестов: расстояние по полу от водителя до ближайшего из жителей, м (9, если жителей нет). Вплотную к водителю никто не сидит.</summary>
+        public float DriverClearance()
+        {
+            if (driver == null) return 9f;
+            float best = 9f;
+            for (int i = 0; i < Passengers.Count; i++)
+            {
+                if (Passengers[i] == driver) continue;
+                Vector3 d = Passengers[i].Root.localPosition - driver.Root.localPosition;
+                d.y = 0f;
+                best = Mathf.Min(best, d.magnitude);
+            }
+            return best;
+        }
+
         Transform interior;
         Transform world;
         readonly List<Mesh> meshes = new List<Mesh>();
@@ -364,8 +379,9 @@ namespace PokaGoryu
 
         void BuildPassengers(int boarded)
         {
-            // кто где сидит: рядом с героем слева, потом по рядам
-            Vector2[] seats = { new Vector2(-0.8f, 3.2f), new Vector2(0.8f, 1.6f), new Vector2(-0.8f, 1.6f), new Vector2(0.8f, 0f), new Vector2(-0.8f, 0f), new Vector2(0.8f, -1.6f) };
+            // кто где сидит: сзади героя и через проход, потом по рядам. Слева у самого водителя (x -0.8, z 3.2) сидеть некому: там нет
+            // сиденья, а человек оказывался в 0,7 м за спиной водителя и ногами в его кресле
+            Vector2[] seats = { new Vector2(0.8f, 1.6f), new Vector2(-0.8f, 1.6f), new Vector2(0.8f, 0f), new Vector2(-0.8f, 0f), new Vector2(0.8f, -1.6f), new Vector2(-0.8f, -1.6f) };
             int count = Mathf.Clamp(boarded, 0, seats.Length);
             for (int i = 0; i < count; i++)
             {
