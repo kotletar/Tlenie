@@ -23,10 +23,22 @@ namespace PokaGoryu
 
         public int Count { get { return verts.Count; } }
 
+        /// <summary>
+        /// Единичная нормаль грани (a, b, c): Cross(b-a, c-a) смотрит наружу. У миллиметровых граней (пальцы, ногти, торцы) векторное
+        /// произведение меньше 1e-5, и Vector3.normalized возвращает для него нуль: нулевая нормаль даёт в шейдере NaN и чёрное пятно.
+        /// Поэтому рёбра растянуты в 256 раз (на нормаль больших граней это не влияет).
+        /// </summary>
+        static Vector3 FaceNormal(Vector3 a, Vector3 b, Vector3 c)
+        {
+            Vector3 n = Vector3.Cross((b - a) * 256f, (c - a) * 256f);
+            float m = n.magnitude;
+            return m > 1e-9f ? n / m : Vector3.up;
+        }
+
         /// <summary>Четырёхугольник: порядок вершин такой, что Cross(b-a, c-a) смотрит наружу.</summary>
         public void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color32 col)
         {
-            Vector3 n = Vector3.Cross(b - a, c - a).normalized;
+            Vector3 n = FaceNormal(a, b, c);
             int i = verts.Count;
             verts.Add(a); verts.Add(b); verts.Add(c); verts.Add(d);
             for (int k = 0; k < 4; k++)
@@ -42,7 +54,7 @@ namespace PokaGoryu
         /// <summary>Четырёхугольник с текстурными координатами (вывески, плакаты): ua..ud — UV вершин a..d.</summary>
         public void QuadUV(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector2 ua, Vector2 ub, Vector2 uc, Vector2 ud, Color32 col)
         {
-            Vector3 n = Vector3.Cross(b - a, c - a).normalized;
+            Vector3 n = FaceNormal(a, b, c);
             int i = verts.Count;
             verts.Add(a); verts.Add(b); verts.Add(c); verts.Add(d);
             for (int k = 0; k < 4; k++)
@@ -58,7 +70,7 @@ namespace PokaGoryu
         /// <summary>Треугольник: Cross(b-a, c-a) смотрит наружу.</summary>
         public void Tri(Vector3 a, Vector3 b, Vector3 c, Color32 col)
         {
-            Vector3 n = Vector3.Cross(b - a, c - a).normalized;
+            Vector3 n = FaceNormal(a, b, c);
             int i = verts.Count;
             verts.Add(a); verts.Add(b); verts.Add(c);
             for (int k = 0; k < 3; k++)

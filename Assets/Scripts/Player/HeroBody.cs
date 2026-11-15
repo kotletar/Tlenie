@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace PokaGoryu
@@ -9,8 +10,10 @@ namespace PokaGoryu
     /// Руки собраны под контракт PalmShot.cs (ссылка): HandsRoot — корень рук (отдача), у каждой кисти есть ладонь-пустышка
     /// (её +Z смотрит из ладони) и суставы пальцев; пальцы раскрываются на openAngle. Обычная поза — «готовность»,
     /// как в PalmShot: ладони вперёд, пальцы вверх. Вдох — чаша, выдох — подношение, прикрыть огонь — ладони на груди.
-    /// Лучи, вспышка и отдача — PalmShot. Рукава закатаны: предплечья — кожа с манжетой у локтя и ремешком на запястье,
-    /// сужаются к кисти (не тёмные цилиндры). При ходьбе кисти качаются в такт шагам.
+    /// Лучи, вспышка и отдача — PalmShot. Рукава закатаны: предплечья — кожа с манжетой у локтя и ремешком на запястье
+    /// (с пряжкой), сужаются к кисти (не тёмные цилиндры). При ходьбе кисти качаются в такт шагам.
+    /// Кисть: ладонь-клин с выпуклым тылом (костяшки, сухожилия, косточка запястья; на ладони — бугры и две складки),
+    /// пальцы из конусных фаланг с утолщением у сустава и закруглённой подушечкой, на ногтевых фалангах — светлые ногти.
     /// </summary>
     public class HeroBody : MonoBehaviour
     {
@@ -66,12 +69,27 @@ namespace PokaGoryu
 
         static readonly Color SkinBase = new Color(0.40f, 0.31f, 0.25f, 1f);
         static readonly Color FabricBase = new Color(0.36f, 0.33f, 0.27f, 1f);   // рукав и куртка: тёплый хаки, не чёрный
+        static readonly Color NailBase = new Color(0.60f, 0.47f, 0.42f, 1f);     // ногти светлее кожи и чуть розовее
+        // оттенки деталей кисти: шейдер умножает цвет вершины на цвет кожи, так что здесь только «темнее и краснее»
+        static readonly Color32 SkinKnuckle = new Color32(232, 216, 208, 255);   // складки у суставов, косточки, сухожилия
+        static readonly Color32 SkinPalm = new Color32(242, 228, 222, 255);      // внутренняя сторона кисти и подушечки пальцев
+        static readonly Color32 SkinCrease = new Color32(158, 126, 114, 255);    // складки ладони
         Material skinMat;
+        Material nailMat;
+        readonly List<Mesh> handMeshes = new List<Mesh>();   // меши кистей: общие для обеих рук, освобождаются в OnDestroy
 
         /// <summary>Яркость кожи (1 — как в игре). В тёмной кухне предыстории руки светлее, иначе они тонут в темноте.</summary>
         public void SetSkinTone(float k)
         {
             if (skinMat != null) skinMat.SetColor("_Color", new Color(SkinBase.r * k, SkinBase.g * k, SkinBase.b * k, 1f));
+            if (nailMat != null) nailMat.SetColor("_Color", new Color(NailBase.r * k, NailBase.g * k, NailBase.b * k, 1f));
+        }
+
+        void OnDestroy()
+        {
+            for (int i = 0; i < handMeshes.Count; i++)
+                if (handMeshes[i] != null) Destroy(handMeshes[i]);
+            handMeshes.Clear();
         }
 
         // Полоска здоровья на левом предплечье: размер картинки (пиксели), доля картинки по длине и охват предплечья
@@ -109,6 +127,7 @@ namespace PokaGoryu
             Material pants = Gfx.Lit(new Color(0.14f, 0.14f, 0.19f, 1f));
             Material skin = Gfx.Lit(SkinBase);
             skinMat = skin;
+            nailMat = Gfx.Lit(NailBase);
             Material metal = Gfx.Lit(new Color(0.26f, 0.26f, 0.29f, 1f));
 
             // Торс, бёдра, ноги, воротник — это видно только когда смотришь вниз: прячем, пока герой смотрит вперёд
@@ -145,11 +164,12 @@ namespace PokaGoryu
             Mesh foreFabric = BuildForeFabricMesh();
             shoulder[0] = new Vector3(-0.25f, 1.37f, 0f);
             shoulder[1] = new Vector3(0.25f, 1.37f, 0f);
+            Mesh[] phalanx = BuildPhalanxMeshes();   // пальцы симметричны: меши общие для обеих кистей
             for (int a = 0; a < 2; a++)
             {
                 upper[a] = MakeArmPart("Upper" + a, null, upperMesh, skin, fabric);
                 fore[a] = MakeArmPart("Fore" + a, foreSkin, foreFabric, skin, fabric);
-                Hands[a] = BuildHand(a, skin);
+                Hands[a] = BuildHand(a, skin, phalanx);
                 Vector3 ready;
                 Quaternion readyRot;
                 float readyOpen;
@@ -212,6 +232,8 @@ namespace PokaGoryu
             b.Frustum(new Vector3(0f, 0.06f, 0f), Vector3.up, 0.054f, 0.052f, 0.13f, 10, White32, true, true);
             b.Frustum(new Vector3(0f, 0.12f, 0f), Vector3.up, 0.0565f, 0.0565f, 0.035f, 10, new Color32(190, 190, 190, 255), false, true);
             b.Frustum(new Vector3(0f, 0.948f, 0f), Vector3.up, 0.0305f, 0.0295f, 0.075f, 10, new Color32(86, 66, 52, 255), true, true);
+            // пряжка ремешка на тыльной стороне запястья (-Z меша: ладонь, а с ней полоска здоровья, смотрит в +Z)
+            b.Box(new Vector3(0f, 0.948f, -0.0318f), new Vector3(0.014f, 0.034f, 0.005f), new Color32(255, 250, 235, 255));
             return b.Build("PG_ArmForeFabric");
         }
 
@@ -336,9 +358,158 @@ namespace PokaGoryu
             return g.transform;
         }
 
-        static void AddSeg(Transform joint, float len, float th, Material m)
+        // толщина фаланг указательного, среднего, безымянного и мизинца по порядку: основная, средняя, ногтевая (до масштаба кисти)
+        static readonly float[] PhalanxThick = { 0.017f, 0.0155f, 0.014f };
+
+        // ------------------------------------------------------------------ кисть: меши деталей
+
+        /// <summary>
+        /// Усечённая «труба» с овальным сечением: от точки start вдоль axis на length. xDir — направление первой полуоси сечения,
+        /// вторая — Cross(axis, xDir). rx0/ry0 — полуоси у начала, rx1/ry1 — у конца. Грани повёрнуты так, что сверху и с боков лежит
+        /// ровная грань, а не ребро: на тыле пальца ноготь ложится плашмя.
+        /// </summary>
+        static void Taper(MeshBatch b, Vector3 start, Vector3 axis, Vector3 xDir, float rx0, float ry0, float rx1, float ry1,
+                          float length, int sides, Color32 col, bool capStart, bool capEnd)
         {
-            Gfx.Prim(PrimitiveType.Cube, joint, new Vector3(0f, 0f, len * 0.5f), new Vector3(th, th * 0.9f, len * 1.03f), m, false);
+            axis.Normalize();
+            Vector3 u = xDir.normalized;
+            Vector3 w = Vector3.Cross(axis, u);
+            Vector3 c0 = start;
+            Vector3 c1 = start + axis * length;
+            float step = 6.2831853f / sides;
+            float off = step * 0.5f;
+            for (int i = 0; i < sides; i++)
+            {
+                float a0 = off + i * step;
+                float a1 = a0 + step;
+                float cs0 = Mathf.Cos(a0), sn0 = Mathf.Sin(a0), cs1 = Mathf.Cos(a1), sn1 = Mathf.Sin(a1);
+                Vector3 b0 = c0 + u * (cs0 * rx0) + w * (sn0 * ry0);
+                Vector3 b1 = c0 + u * (cs1 * rx0) + w * (sn1 * ry0);
+                Vector3 t0 = c1 + u * (cs0 * rx1) + w * (sn0 * ry1);
+                Vector3 t1 = c1 + u * (cs1 * rx1) + w * (sn1 * ry1);
+                b.Quad(b1, t1, t0, b0, col);
+                if (capEnd) b.Tri(c1, t0, t1, col);
+                if (capStart) b.Tri(c0, b1, b0, col);
+            }
+        }
+
+        /// <summary>Низкий купол из двух ярусов: основание start (внутри тела) растёт на height вдоль axis, радиусы rx, ry сужаются до 40%.</summary>
+        static void Dome(MeshBatch b, Vector3 start, Vector3 axis, Vector3 xDir, float rx, float ry, float height, Color32 col)
+        {
+            Vector3 a = axis.normalized;
+            Taper(b, start, a, xDir, rx, ry, rx * 0.78f, ry * 0.78f, height * 0.6f, 8, col, false, false);
+            Taper(b, start + a * (height * 0.6f), a, xDir, rx * 0.78f, ry * 0.78f, rx * 0.40f, ry * 0.40f, height * 0.4f, 8, col, false, true);
+        }
+
+        /// <summary>
+        /// Клин вдоль Z: от z0 (полуширина w0, полутолщина t0) до z1 (w1, t1). Грани смотрят наружу. Тыл (+Y) слегка выпуклый:
+        /// посередине выше краёв на arch, как у настоящей кисти.
+        /// </summary>
+        static void Wedge(MeshBatch b, float z0, float w0, float t0, float z1, float w1, float t1, float arch, Color32 col)
+        {
+            Vector3 b00 = new Vector3(-w0, -t0, z0), b10 = new Vector3(w0, -t0, z0), b11 = new Vector3(w0, t0, z0), b01 = new Vector3(-w0, t0, z0);
+            Vector3 f00 = new Vector3(-w1, -t1, z1), f10 = new Vector3(w1, -t1, z1), f11 = new Vector3(w1, t1, z1), f01 = new Vector3(-w1, t1, z1);
+            Vector3 bc = new Vector3(0f, t0 + arch, z0), fc = new Vector3(0f, t1 + arch, z1);
+            b.Quad(b01, f01, fc, bc, col);     // +Y: тыл, левая половина
+            b.Quad(bc, fc, f11, b11, col);     // +Y: тыл, правая половина
+            b.Quad(b00, b10, f10, f00, col);   // -Y: ладонь
+            b.Quad(b10, b11, f11, f10, col);   // +X
+            b.Quad(b00, f00, f01, b01, col);   // -X
+            b.Quad(b00, b01, b11, b10, col);   // -Z: запястье
+            b.Quad(f00, f10, f11, f01, col);   // +Z: костяшки
+        }
+
+        /// <summary>
+        /// Фаланга от сустава (z = 0) до z = len. У сустава утолщение swell (косточка, складка), дальше сужение; у ногтевой фаланги
+        /// (distal) — закруглённая подушечка. Сечение овальное: шире, чем толще (раньше были кубики: ширина th, высота 0.9 th).
+        /// </summary>
+        static Mesh BuildPhalanxMesh(string name, bool distal, float len, float th, float swell)
+        {
+            MeshBatch b = new MeshBatch();
+            float rx = th * 0.5f;
+            float ry = th * 0.45f;
+            float neck = len * (distal ? 0.16f : 0.20f);
+            Vector3 f = Vector3.forward;
+            Vector3 x = Vector3.right;
+            Taper(b, Vector3.zero, f, x, rx * swell, ry * swell, rx, ry, neck, 8, SkinKnuckle, true, false);
+            if (!distal)
+            {
+                // торец перекрывает следующий сустав на 3%, чтобы согнутый палец не просвечивал
+                Taper(b, f * neck, f, x, rx, ry, rx * 0.88f, ry * 0.88f, len * 1.03f - neck, 8, White32, false, true);
+            }
+            else
+            {
+                // подушечка в три ступени: торец получается маленьким и круглым (плоский торец в тени чернеет), а не широким чёрным пятном
+                float zp = len * 0.62f;
+                float z2 = len * 0.84f;
+                float z3 = len * 0.95f;
+                Taper(b, f * neck, f, x, rx, ry, rx * 0.92f, ry * 0.92f, zp - neck, 8, White32, false, false);
+                Taper(b, f * zp, f, x, rx * 0.92f, ry * 0.92f, rx * 0.80f, ry * 0.78f, z2 - zp, 8, White32, false, false);
+                Taper(b, f * z2, f, x, rx * 0.80f, ry * 0.78f, rx * 0.56f, ry * 0.52f, z3 - z2, 8, White32, false, false);
+                Taper(b, f * z3, f, x, rx * 0.56f, ry * 0.52f, rx * 0.26f, ry * 0.24f, len * 1.03f - z3, 8, SkinPalm, false, true);
+            }
+            return b.Build(name);
+        }
+
+        /// <summary>14 фаланг в порядке FingerLen (4 пальца по 3, потом большой по 2). Пальцы симметричны: меши общие для обеих кистей.</summary>
+        Mesh[] BuildPhalanxMeshes()
+        {
+            float s = HandScale;
+            float[] swell = { 1.08f, 1.10f, 1.10f };
+            Mesh[] m = new Mesh[FingerLen.Length];
+            for (int f = 0; f < 4; f++)
+            {
+                for (int k = 0; k < 3; k++)
+                {
+                    int i = f * 3 + k;
+                    m[i] = BuildPhalanxMesh("PG_Phalanx" + i, k == 2, FingerLen[i] * s, PhalanxThick[k] * s, swell[k]);
+                }
+            }
+            m[12] = BuildPhalanxMesh("PG_Phalanx12", false, FingerLen[12] * s, 0.019f * s, 1.22f);   // у основания большого пальца — бугор ладони
+            m[13] = BuildPhalanxMesh("PG_Phalanx13", true, FingerLen[13] * s, 0.017f * s, 1.10f);
+            handMeshes.AddRange(m);
+            return m;
+        }
+
+        /// <summary>
+        /// Ладонь и тыл кисти (оси кисти: +Z вдоль пальцев, +Y — тыл, ладонь в -Y): клин, узкий у запястья и широкий у костяшек.
+        /// На тыле — бугры костяшек, сухожилия, косточка у запястья; на ладони — бугры у основания большого пальца и у мизинца и две складки.
+        /// </summary>
+        Mesh BuildPalmMesh(float side, float s)
+        {
+            MeshBatch b = new MeshBatch();
+            Vector3 up = Vector3.up;
+            Vector3 down = Vector3.down;
+            Vector3 fwd = Vector3.forward;
+            const float arch = 0.0014f;   // выпуклость тыла посередине
+            Wedge(b, -0.045f * s, 0.031f * s, 0.0105f * s, 0.045f * s, 0.043f * s, 0.013f * s, arch * s, White32);
+            for (int f = 0; f < 4; f++)
+            {
+                float x = side * (-0.027f + 0.018f * f) * s;
+                float lift = arch * (1f - Mathf.Abs(x) / (0.040f * s)) * s;   // насколько тыл приподнят над краем в этом месте
+                Dome(b, new Vector3(x, 0.0120f * s + lift, 0.039f * s), up, fwd, 0.0066f * s, 0.0072f * s, 0.0052f * s, SkinKnuckle);
+                // сухожилие: у запястья заметно, к костяшке уходит под кожу (поверхность тыла там выше верха бруска)
+                b.Box(new Vector3(x, 0.0107f * s + lift, -0.003f * s), new Vector3(0.0032f, 0.0030f, 0.066f) * s, SkinKnuckle);
+            }
+            Dome(b, new Vector3(side * 0.024f * s, 0.0098f * s + arch * 0.4f * s, -0.038f * s), up, fwd, 0.0055f * s, 0.0055f * s, 0.0048f * s, SkinKnuckle);
+            // бугры ладони (у большого пальца и у мизинца): низкие купола в два яруса, целиком в контуре ладони
+            Dome(b, new Vector3(-side * 0.021f * s, -0.0102f * s, -0.014f * s), down, fwd, 0.022f * s, 0.0110f * s, 0.0042f * s, SkinPalm);
+            Dome(b, new Vector3(side * 0.030f * s, -0.0100f * s, 0.004f * s), down, fwd, 0.018f * s, 0.0065f * s, 0.0032f * s, SkinPalm);
+            b.Box(new Vector3(0f, -0.0121f * s, 0.012f * s), new Vector3(0.050f, 0.0011f, 0.0022f) * s, SkinCrease);
+            b.Box(new Vector3(-side * 0.010f * s, -0.0115f * s, -0.012f * s), new Vector3(0.030f, 0.0011f, 0.0022f) * s, SkinCrease);
+            Mesh m = b.Build("PG_HandPalm" + (side > 0f ? "R" : "L"));
+            handMeshes.Add(m);
+            return m;
+        }
+
+        /// <summary>Ноготь: светлая пластинка на тыльной стороне ногтевой фаланги (отдельный объект: у него свой, более светлый материал).</summary>
+        void AddNail(Transform joint, float len, float th)
+        {
+            float ry = th * 0.45f;
+            Vector3 pos = new Vector3(0f, ry * 0.93f, len * 0.54f);
+            Vector3 size = new Vector3(th * 0.56f, 0.0016f * HandScale, len * 0.52f);
+            GameObject nail = Gfx.Prim(PrimitiveType.Cube, joint, pos, size, nailMat, false);
+            nail.name = "Nail";
         }
 
         /// <summary>
@@ -346,7 +517,7 @@ namespace PokaGoryu
         /// Якорь ладони (Palm) повёрнут так, что его +Z — это нормаль ладони (оттуда вылетают лучи).
         /// Суставы собираются в PalmShot.HandFx: baseRot задаёт позу, openAngle — на сколько раскрывается палец.
         /// </summary>
-        HandRig BuildHand(int a, Material skin)
+        HandRig BuildHand(int a, Material skin, Mesh[] phalanx)
         {
             float side = a == 0 ? -1f : 1f;
             float s = HandScale;
@@ -356,7 +527,8 @@ namespace PokaGoryu
             h.Root = rg.transform;
             h.Root.SetParent(HandsRoot, false);
 
-            Gfx.Prim(PrimitiveType.Cube, h.Root, Vector3.zero, new Vector3(0.086f, 0.026f, 0.090f) * s, skin, false);
+            // ладонь: клин от запястья к костяшкам с косточками, сухожилиями, подушечками и складками
+            Gfx.MeshObject(h.Root, BuildPalmMesh(side, s), skin, "PalmMesh");
 
             // Якорь ладони (контракт PalmShot): пустышка, ничего не рисует
             GameObject pg = new GameObject("Palm");
@@ -375,7 +547,6 @@ namespace PokaGoryu
 
             float[] curlMaxPhalanx = { 84f, 98f, 64f };
             float[] curlExtPhalanx = { -4f, -2f, -2f };
-            float[] thick = { 0.017f, 0.0155f, 0.014f };
             int ji = 0;
             for (int f = 0; f < 4; f++)
             {
@@ -386,7 +557,8 @@ namespace PokaGoryu
                 {
                     float len = FingerLen[ji] * s;
                     Transform jt = MakeJoint(parent, at);
-                    AddSeg(jt, len, thick[k] * s, skin);
+                    Gfx.MeshObject(jt, phalanx[ji], skin, "Phalanx");
+                    if (k == 2) AddNail(jt, len, PhalanxThick[k] * s);
                     h.CurlMax[ji] = curlMaxPhalanx[k];
                     h.CurlExt[ji] = curlExtPhalanx[k];
                     h.BaseY[ji] = 0f;
@@ -399,13 +571,14 @@ namespace PokaGoryu
 
             // большой палец: основание сбоку ладони, повёрнуто к центру
             Transform tb = MakeJoint(h.Root, new Vector3(-side * 0.045f * s, -0.004f * s, -0.010f * s));
-            AddSeg(tb, FingerLen[12] * s, 0.019f * s, skin);
+            Gfx.MeshObject(tb, phalanx[12], skin, "Phalanx");
             h.CurlMax[12] = 44f;
             h.CurlExt[12] = 0f;
             h.BaseY[12] = -side * 32f;
             SetFxJoint(h, 12, tb);
             Transform tt = MakeJoint(tb, new Vector3(0f, 0f, FingerLen[12] * s));
-            AddSeg(tt, FingerLen[13] * s, 0.017f * s, skin);
+            Gfx.MeshObject(tt, phalanx[13], skin, "Phalanx");
+            AddNail(tt, FingerLen[13] * s, 0.017f * s);
             h.CurlMax[13] = 62f;
             h.CurlExt[13] = -6f;
             h.BaseY[13] = 0f;

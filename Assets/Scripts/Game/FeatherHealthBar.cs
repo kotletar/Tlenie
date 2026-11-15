@@ -152,7 +152,7 @@ namespace PokaGoryu
             Shader lit = Shader.Find("Pokagoryu/Feather");
             if (lit == null)
             {
-                Debug.LogError("[Пока горю] Не найден шейдер Pokagoryu/Feather (Assets/Resources/Shaders). Полоска здоровья отключена.");
+                Debug.LogError("[Тлеющая тьма] Не найден шейдер Pokagoryu/Feather (Assets/Resources/Shaders). Полоска здоровья отключена.");
                 enabled = false;
                 return;
             }

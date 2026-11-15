@@ -20,7 +20,7 @@ namespace PokaGoryu.EditorTools
         public static void PrintCityMap()
         {
             CityMap.Build();
-            Debug.Log("[Пока горю] Карта города (сверху север):\n" + CityMap.ToAscii());
+            Debug.Log("[Тлеющая тьма] Карта города (сверху север):\n" + CityMap.ToAscii());
         }
 
         [MenuItem("Pokagoryu/Create Main Scene and Build Settings")]
@@ -32,7 +32,7 @@ namespace PokaGoryu.EditorTools
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new EditorBuildSettingsScene[] { new EditorBuildSettingsScene(ScenePath, true) };
             AssetDatabase.Refresh();
-            Debug.Log("[Пока горю] Сцена создана: " + ScenePath + " и добавлена в Build Settings. Нажмите Play.");
+            Debug.Log("[Тлеющая тьма] Сцена создана: " + ScenePath + " и добавлена в Build Settings. Нажмите Play.");
         }
     }
 }

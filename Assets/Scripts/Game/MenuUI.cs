@@ -455,9 +455,9 @@ namespace PokaGoryu
                     float flick = 0.90f + 0.10f * Mathf.PerlinNoise(t * 7f, 1.7f);
                     if (Mathf.PerlinNoise(t * 1.6f, 9.1f) > 0.87f) flick *= 0.5f;   // редкое «моргание» огня
                     GUI.color = new Color(1f, 0.6f, 0.25f, 0.22f * flick);
-                    GUI.DrawTexture(new Rect(cx - 360f, 50f, 720f, 220f), Gfx.TexHalo);
+                    GUI.DrawTexture(new Rect(cx - 480f, 50f, 960f, 220f), Gfx.TexHalo);
                     GUI.color = Color.white;
-                    Txt(new Rect(0f, 90f, vw, 110f), "ПОКА ГОРЮ", sTitle, new Color(Gold.r, Gold.g, Gold.b, flick));
+                    Txt(new Rect(0f, 90f, vw, 110f), "ТЛЕЮЩАЯ ТЬМА", sTitle, new Color(Gold.r, Gold.g, Gold.b, flick));
                     Txt(new Rect(0f, 200f, vw, 40f), "не дай погаснуть", sSub, new Color(Warm.r, Warm.g, Warm.b, 0.85f));
                     Txt(new Rect(0f, 670f, vw, 30f),
                         "Выбор: стрелки или W/S, мышь    Подтвердить: Enter    Назад: Esc",

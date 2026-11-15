@@ -145,6 +145,39 @@ namespace PokaGoryu
             yield return new WaitForSecondsRealtime(0.8f);
             Check(gm.State == GameState.Playing && !gm.Intro.Active, "Space skips intro through input");
 
+            // Кисти детальные: у каждой клиновая ладонь, 14 конусных фаланг и 5 ногтей; контракт PalmShot (14 суставов) цел
+            int palms = 0, segments = 0, nails = 0;
+            bool jointsOk = true;
+            for (int ha = 0; ha < 2; ha++)
+            {
+                HeroBody.HandRig hand = gm.Player.Body.Hands[ha];
+                foreach (MeshRenderer part in hand.Root.GetComponentsInChildren<MeshRenderer>(true))
+                {
+                    if (part.name == "PalmMesh") palms++;
+                    else if (part.name == "Phalanx") segments++;
+                    else if (part.name == "Nail") nails++;
+                }
+                jointsOk &= hand.Fx.joints.Length == 14 && hand.Palm != null;
+            }
+            Check(palms == 2 && segments == 28 && nails == 10 && jointsOk,
+                "each hand has a wedge palm, 14 tapered finger segments and 5 nails (" + palms + " palms, " + segments + " segments, " + nails + " nails for two hands)");
+
+            // Нулевая нормаль даёт в шейдере NaN и чёрное пятно (так чернели кончики пальцев: у миллиметровых граней векторное
+            // произведение меньше порога Vector3.normalized). Ни у одного читаемого меша сцены таких нормалей быть не должно.
+            int zeroNormals = 0;
+            int checkedMeshes = 0;
+            foreach (MeshFilter mf in FindObjectsByType<MeshFilter>())
+            {
+                Mesh mesh = mf.sharedMesh;
+                if (mesh == null || !mesh.isReadable) continue;
+                Vector3[] normals = mesh.normals;
+                if (normals.Length == 0) continue;
+                checkedMeshes++;
+                for (int ni = 0; ni < normals.Length; ni++)
+                    if (normals[ni].sqrMagnitude < 0.25f) zeroNormals++;
+            }
+            Check(zeroNormals == 0, "no scene mesh has a zero normal, which would render black (" + checkedMeshes + " meshes checked, " + zeroNormals + " bad)");
+
             float fov = GameSettings.FieldOfView;
             GameSettings.FieldOfView = 92f; GameSettings.Apply();
             Check(Mathf.Abs(gm.Player.Cam.fieldOfView - 92f) < 0.01f, "FOV applies live");

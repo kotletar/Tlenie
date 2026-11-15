@@ -787,7 +787,7 @@ namespace PokaGoryu
             if (k >= KTitle)
             {
                 float a = Mathf.Clamp01(Mathf.Min((k - KTitle) / 0.8f, (KEnd - k) / 0.8f));
-                Shadowed(new Rect(0f, h * 0.36f, w, h * 0.16f), "ПОКА ГОРЮ", titleStyle, new Color(1f, 0.82f, 0.48f, a));
+                Shadowed(new Rect(0f, h * 0.36f, w, h * 0.16f), "ТЛЕЮЩАЯ ТЬМА", titleStyle, new Color(1f, 0.82f, 0.48f, a));
                 Shadowed(new Rect(0f, h * 0.53f, w, h * 0.06f), "конец", subStyle, new Color(1f, 0.92f, 0.75f, a * 0.8f));
             }
 

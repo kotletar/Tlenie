@@ -139,6 +139,7 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "aerialskip") StepAerialSkip(gm);
                 else if (scenario == "follow") StepFollow(gm);
                 else if (scenario == "busfight") StepBusFight(gm);
+                else if (scenario == "handdetail") StepHandDetail(gm);
                 else if (scenario == "finalstand") StepFinalStand(gm, true);
                 else if (scenario == "finalpassive") StepFinalStand(gm, false);
                 else if (scenario == "econ") StepEcon(gm);
@@ -1173,6 +1174,71 @@ namespace PokaGoryu.EditorTools
                     + (busInside > 0 ? "  [BAD: passed through the bus]" : "  ok"));
                 for (int i = 0; i < Enemy.All.Count; i++) report.AppendLine("  enemy " + i + " at " + Enemy.All[i].transform.position.ToString("F1"));
                 Finish("OK", errors > 0 ? 2 : 0);
+            }
+        }
+
+        static EndingLight detailLight;
+
+        /// <summary>
+        /// Без окна: правая кисть крупно с разных сторон при ровном свете (лампа у камеры, свечение героя выключено): тыл, ладонь, бок,
+        /// спереди, кулак, раскрытая кисть. Кадры d01..d08. Левая рука убрана из кадра. Для проверки деталей кисти (ногти, костяшки, складки).
+        /// </summary>
+        static void StepHandDetail(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            HeroBody body = pc.Body;
+            if (frame == 3) gm.State = GameState.Playing;
+            if (frame < 5) return;
+            if (frame == 5)
+            {
+                gm.Hero.Life = 100f;
+                gm.Hero.GlowScale = 0f;
+                body.OverrideW = 1f;
+                body.HideBody = true;
+                detailLight = new EndingLight();
+                detailLight.Radius = 6f;
+                detailLight.Intensity = 0.22f;   // свет рядом с поверхностью пересвечивает её: лампа далеко и слабая
+                detailLight.Col = new Color(1f, 0.97f, 0.9f);
+                LightField.Register(detailLight);
+            }
+            detailLight.Pos = pc.EyePos + new Vector3(0.25f, 0.35f, -0.45f);
+            body.OverridePos[0] = new Vector3(-0.30f, 0.90f, 0.15f);   // левая рука вне кадра
+            Vector3 eye = HeroBody.EyeLocal;
+            int idx = (frame - 6) / 40;
+            int ph = (frame - 6) % 40;
+            string[] names = { "d01_back", "d02_palm", "d03_side", "d04_tips", "d05_fist_back", "d06_open_back", "d07_palm_curled", "d08_oblique", "d09_tipside", "d10_tipsback" };
+            if (idx >= names.Length)
+            {
+                if (ph == 0) Finish("OK", errors > 0 ? 2 : 0);
+                return;
+            }
+            if (ph == 0)
+            {
+                Quaternion rot;
+                Vector3 pos = eye + new Vector3(0.04f, -0.05f, 0.36f);
+                float open = 0.85f;
+                switch (idx)
+                {
+                    case 0: rot = Quaternion.LookRotation(Vector3.up, Vector3.back); break;                       // тыл к камере, пальцы вверх
+                    case 1: rot = Quaternion.LookRotation(Vector3.up, Vector3.forward); break;                    // ладонь к камере
+                    case 2: rot = Quaternion.LookRotation(Vector3.up, Vector3.right); break;                      // сбоку
+                    case 3: rot = Quaternion.LookRotation(Vector3.back + Vector3.up * 0.35f, Vector3.up); pos = eye + new Vector3(0.0f, -0.17f, 0.50f); break;   // пальцы на камеру
+                    case 4: rot = Quaternion.LookRotation(Vector3.up, Vector3.back); open = 0f; break;            // кулак, тыл
+                    case 5: rot = Quaternion.LookRotation(Vector3.up, Vector3.back); open = 1f; break;            // раскрытая, тыл
+                    case 6: rot = Quaternion.LookRotation(Vector3.up, Vector3.forward); open = 0.45f; break;      // ладонь, полусогнутая
+                    case 8: rot = Quaternion.LookRotation(Vector3.right, Vector3.back); pos = eye + new Vector3(-0.07f, -0.03f, 0.24f); open = 0.85f; break;   // пальцы вправо, тыл к камере, вплотную
+                    case 9: rot = Quaternion.LookRotation(Vector3.up, Vector3.back); pos = eye + new Vector3(0f, -0.15f, 0.24f); open = 0.85f; break;           // пальцы вверх, тыл к камере, вплотную
+                    default: rot = Quaternion.LookRotation(Vector3.up + Vector3.right * 0.5f + Vector3.forward * 0.3f, Vector3.back + Vector3.right * 0.4f); open = 0.7f; break;
+                }
+                body.OverridePos[1] = pos;
+                body.OverrideRot[1] = rot;
+                body.OverrideOpen[1] = open;
+                body.OverrideOpen[0] = 0.5f;
+            }
+            if (ph == 36)
+            {
+                Capture(names[idx]);
+                report.AppendLine("hand " + names[idx] + " ok");
             }
         }
 

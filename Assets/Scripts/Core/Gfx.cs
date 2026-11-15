@@ -64,7 +64,7 @@ namespace PokaGoryu
             PostShader = Shader.Find("Pokagoryu/Post");
             if (WorldShader == null || UnlitShader == null)
             {
-                Debug.LogError("[Пока горю] Не найдены шейдеры Pokagoryu/World или Pokagoryu/Unlit. Проверьте Assets/Resources/Shaders.");
+                Debug.LogError("[Тлеющая тьма] Не найдены шейдеры Pokagoryu/World или Pokagoryu/Unlit. Проверьте Assets/Resources/Shaders.");
                 Shader fallback = Shader.Find("Sprites/Default");
                 if (WorldShader == null) WorldShader = fallback;
                 if (UnlitShader == null) UnlitShader = fallback;
