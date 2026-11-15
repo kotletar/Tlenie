@@ -21,6 +21,56 @@ namespace PokaGoryu
         public static readonly Vector3 LampPos = new Vector3(0f, 1.90f, 0.40f);
         public static readonly Vector3 ClockCenter = new Vector3(2.165f, 1.98f, 0.25f);
 
+        // Окно: подоконник и шторы заданы данными, чтобы проверка могла убедиться, что шторы не проходят сквозь подоконник.
+        public static readonly Bounds SillBox = new Bounds(new Vector3(0f, 0.96f, 2.22f), new Vector3(2.3f, 0.05f, 0.34f));
+        const float CurtainX = 1.2f;          // середина каждой половины шторы от оси окна
+        const float CurtainW = 0.42f;
+        const float CurtainZ = 2.27f;         // полотно между рамой (z 2.33) и краем подоконника (z 2.05), над самим подоконником
+        const float CurtainD = 0.07f;
+        const float CurtainFoldZ = 2.225f;    // складки чуть выступают из полотна в комнату
+        const float CurtainBottom = 0.995f;   // подол на 1 см выше подоконника (верх его 0.985): раньше шторы доходили до 0.81 и проходили сквозь него
+        const float CurtainTop = 2.43f;       // карниз на высоте 2.42 проходит сквозь верх полотна, как через петли
+
+        /// <summary>Коробки штор: для каждой половины полотно, потом три складки (в этом порядке).</summary>
+        public static List<Bounds> CurtainBoxes()
+        {
+            List<Bounds> list = new List<Bounds>();
+            float h = CurtainTop - CurtainBottom;
+            float midY = (CurtainTop + CurtainBottom) * 0.5f;
+            for (int s = -1; s <= 1; s += 2)
+            {
+                float cx = s * CurtainX;
+                list.Add(new Bounds(new Vector3(cx, midY, CurtainZ), new Vector3(CurtainW, h, CurtainD)));
+                for (int f = 0; f < 3; f++) list.Add(new Bounds(new Vector3(cx + (f - 1) * 0.12f, midY, CurtainFoldZ), new Vector3(0.05f, h, 0.03f)));
+            }
+            return list;
+        }
+
+        /// <summary>Насколько глубоко самая «глубокая» коробка шторы заходит в подоконник, метры; 0 — шторы подоконника не касаются.</summary>
+        public static float CurtainSillOverlap()
+        {
+            float worst = 0f;
+            List<Bounds> boxes = CurtainBoxes();
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                Bounds c = boxes[i];
+                float ox = Mathf.Min(c.max.x, SillBox.max.x) - Mathf.Max(c.min.x, SillBox.min.x);
+                float oy = Mathf.Min(c.max.y, SillBox.max.y) - Mathf.Max(c.min.y, SillBox.min.y);
+                float oz = Mathf.Min(c.max.z, SillBox.max.z) - Mathf.Max(c.min.z, SillBox.min.z);
+                if (ox > 0f && oy > 0f && oz > 0f) worst = Mathf.Max(worst, Mathf.Min(ox, Mathf.Min(oy, oz)));
+            }
+            return worst;
+        }
+
+        /// <summary>Строка отчёта для стенда: где подоконник, где низ штор и на сколько они заходят в подоконник.</summary>
+        public static string CurtainReport()
+        {
+            return "window: sill y " + SillBox.min.y.ToString("0.000") + ".." + SillBox.max.y.ToString("0.000") + ", z " + SillBox.min.z.ToString("0.00") + ".." + SillBox.max.z.ToString("0.00")
+                + "; curtains y " + CurtainBottom.ToString("0.000") + ".." + CurtainTop.ToString("0.000")
+                + "; curtain bottom above the sill top by " + ((CurtainBottom - SillBox.max.y) * 100f).ToString("0.0") + " cm"
+                + "; overlap into the sill " + (CurtainSillOverlap() * 100f).ToString("0.0") + " cm";
+        }
+
         public Transform Root;
         public Vector3 Origin;
 
@@ -295,15 +345,11 @@ namespace PokaGoryu
             b.Box(new Vector3(1.03f, 1.6f, 2.37f), new Vector3(0.06f, 1.32f, 0.08f), white);
             b.Box(new Vector3(0f, 1.6f, 2.37f), new Vector3(0.04f, 1.26f, 0.05f), white);
             b.Box(new Vector3(0f, 1.6f, 2.37f), new Vector3(2.0f, 0.04f, 0.05f), white);
-            b.Box(new Vector3(0f, 0.96f, 2.22f), new Vector3(2.3f, 0.05f, 0.34f), white);
+            b.Box(SillBox.center, SillBox.size, white);
             Color32 curt = C(118, 44, 48);
             Color32 curtD = C(90, 30, 36);
-            for (int s = -1; s <= 1; s += 2)
-            {
-                float cx = s * 1.2f;
-                b.Box(new Vector3(cx, 1.62f, 2.27f), new Vector3(0.42f, 1.62f, 0.07f), curt);
-                for (int f = 0; f < 3; f++) b.Box(new Vector3(cx + (f - 1) * 0.12f, 1.62f, 2.225f), new Vector3(0.05f, 1.62f, 0.03f), curtD);
-            }
+            List<Bounds> curtains = CurtainBoxes();
+            for (int i = 0; i < curtains.Count; i++) b.Box(curtains[i].center, curtains[i].size, i % 4 == 0 ? curt : curtD);
             b.Rod(new Vector3(-1.5f, 2.42f, 2.28f), new Vector3(1.5f, 2.42f, 2.28f), 0.014f, 6, dark);
 
             // цветок на подоконнике

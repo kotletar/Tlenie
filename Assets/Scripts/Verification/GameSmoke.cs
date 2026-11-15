@@ -489,6 +489,8 @@ namespace PokaGoryu
                 "ending: the hero wakes up at the kitchen table");
             Check(gm.Ending.MugClearance() > 0.12f && gm.Ending.TableClearance() > 0.1f,
                 "ending: the sleeping head rests beside the coffee mug, never in it (clearance " + gm.Ending.MugClearance().ToString("0.00") + " m)");
+            // Шторы на кухне (общая для предыстории и концовки) висят над подоконником и не проходят сквозь него
+            Check(Kitchen.CurtainSillOverlap() < 0.0005f, "kitchen: the curtains hang above the windowsill and never go through it (" + Kitchen.CurtainReport() + ")");
             // Руки в кат-сцене: две кости постоянной длины и согнутый локоть (не палка и не рука, сложенная вдвое): ладони подняты, руки на коленях
             for (int armPose = 0; armPose < 2; armPose++)
             {

@@ -63,6 +63,7 @@
 ./docs/verification/run_smoke.ps1 -Scenario armrig_ending
 ./docs/verification/run_smoke.ps1 -Scenario mugview_intro
 ./docs/verification/run_smoke.ps1 -Scenario mugview_ending
+./docs/verification/run_smoke.ps1 -Scenario windowview
 ./docs/verification/run_smoke.ps1 -Scenario monsters
 ./docs/verification/run_smoke.ps1 -Scenario finalstand
 ./docs/verification/run_smoke.ps1 -Scenario finalpassive
@@ -90,6 +91,9 @@
 (держат, несут ко рту, отпускают, толкаются от стола); `PG_NO_OBSTACLE=1` отключает выталкивание кистей из кружки, для сравнения «до».
 В отчёте сканера (`armscan_*`) после длин костей идёт «mug push»: сколько кадров кисть выталкивалась, на сколько сантиметров самое
 большее и самый резкий скачок между кадрами; рывки больше 2 см сканер выписывает строками «push jump» со временем.
+`windowview` запускает предысторию и снимает окно кухни: из глаз героя, из комнаты, нижние края штор спереди, сбоку, снизу и сверху
+(`k0_hero`, `k1_wide`, `k2..k7`) и пишет в отчёт, где подоконник, где подол штор и на сколько шторы заходят в подоконник
+(`Kitchen.CurtainReport`; то же число проверяет игрок: шторы подоконника не касаются).
 `monsters` ставит Тень, Гасителя и Пожирателя на самое широкое открытое место города (стоят на месте: оглушены, здоровье не убывает),
 снимает кадр с точки героя и по четыре ракурса каждого вплотную при вспомогательном свете у камеры (`w{номер}_{имя}_{вид}`), потом их
 в позе нападения (`a1..a3`), укус Пожирателя (`a4`) и гибель Тени (`a5_shade_collapse`); пасть Пожирателя вплотную в покое и открытая

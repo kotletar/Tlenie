@@ -145,6 +145,7 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "monsters") StepMonsters(gm);
                 else if (scenario == "mugview_intro") StepMugView(gm, false);
                 else if (scenario == "mugview_ending") StepMugView(gm, true);
+                else if (scenario == "windowview") StepWindowView(gm);
                 else if (scenario == "armrig_intro") StepArmRig(gm, false);
                 else if (scenario == "armrig_ending") StepArmRig(gm, true);
                 else if (scenario == "armscan_intro") StepArmScan(gm, false);
@@ -1498,6 +1499,38 @@ namespace PokaGoryu.EditorTools
                 else if (ph == 29) CaptureView(gm, tag, target + new Vector3(-0.34f, 0.20f, 0.34f), target);
                 else CaptureView(gm, tag, target + new Vector3(0.02f, 0.40f, 0.10f), target);
                 if (ph == 28) LogArms(gm.Player.Body, tag);
+            }
+        }
+
+        /// <summary>
+        /// Без окна: окно кухни вплотную (шторы и подоконник). Кадры k0_hero (глазами героя), k1_wide (из комнаты), k2/k3 нижние края штор
+        /// спереди, k4/k5 сбоку вдоль подоконника, k6/k7 снизу и сверху справа. Видно, проходят ли шторы сквозь подоконник.
+        /// </summary>
+        static void StepWindowView(GameManager gm)
+        {
+            if (frame == 6) gm.StartGame();
+            if (frame < 14) return;
+            if (frame == 14) gm.Intro.DebugSeek(IntroDirector.RealTime(1.0f));
+            Kitchen k = gm.Intro.AcquireKitchen();
+            string[] names = { "k1_wide", "k2_right_front", "k3_left_front", "k4_right_side", "k5_left_side", "k6_right_below", "k7_right_above" };
+            // глаз и цель в координатах комнаты (подоконник: x +-1.15, y 0.935-0.985, z 2.05-2.39; шторы справа x 0.99-1.41)
+            Vector3[] eyes =
+            {
+                new Vector3(0f, 1.30f, 0.20f), new Vector3(1.15f, 1.25f, 1.55f), new Vector3(-1.15f, 1.25f, 1.55f), new Vector3(1.95f, 1.02f, 2.20f),
+                new Vector3(-1.95f, 1.02f, 2.20f), new Vector3(1.20f, 0.55f, 1.60f), new Vector3(1.20f, 1.75f, 1.65f)
+            };
+            Vector3[] targets =
+            {
+                new Vector3(0f, 1.40f, 2.40f), new Vector3(1.20f, 0.98f, 2.27f), new Vector3(-1.20f, 0.98f, 2.27f), new Vector3(1.20f, 0.97f, 2.27f),
+                new Vector3(-1.20f, 0.97f, 2.27f), new Vector3(1.20f, 0.90f, 2.30f), new Vector3(1.20f, 0.99f, 2.25f)
+            };
+            int i = frame - 24;
+            if (i == 0) Capture("k0_hero");
+            else if (i >= 1 && i <= names.Length) CaptureAt(gm, names[i - 1], k.World(eyes[i - 1]), k.World(targets[i - 1]));
+            else if (i > names.Length)
+            {
+                report.AppendLine(Kitchen.CurtainReport());
+                Finish("OK", errors > 0 ? 2 : 0);
             }
         }
 
