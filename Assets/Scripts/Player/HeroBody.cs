@@ -620,6 +620,28 @@ namespace PokaGoryu
         // ------------------------------------------------------------------ позы рук
 
         /// <summary>
+        /// Поворот кисти между двумя ключами сценария (предыстория, концовка). Обычный Slerp годится, пока ключи близки. Но «ладонь вниз на
+        /// столе» и «ладонь к лицу, пальцы вверх» отличаются ровно на 180° вокруг косой оси, и Slerp выбирает путь наугад: кисть
+        /// выворачивается, обе руки одинаково (так и поднимали, так и опускали). Поэтому в таком случае кисть сначала поворачивается вокруг
+        /// оси пальцев на 90° так, чтобы тыл смотрел наружу, а ладонь внутрь (правая поворачивается влево, левая вправо, как при супинации),
+        /// и только потом идёт к цели. side: +1 правая рука, -1 левая.
+        /// </summary>
+        public static Quaternion HandSlerp(Quaternion a, Quaternion b, float u, float side)
+        {
+            if (Quaternion.Angle(a, b) < 110f) return Quaternion.Slerp(a, b, u);
+            Vector3 fingers = a * Vector3.forward;
+            Quaternion p = Quaternion.AngleAxis(90f, fingers) * a;
+            Quaternion q = Quaternion.AngleAxis(-90f, fingers) * a;
+            float lateralP = side * (p * Vector3.up).x;   // насколько тыл смотрит наружу (вправо у правой руки, влево у левой)
+            float lateralQ = side * (q * Vector3.up).x;
+            Quaternion m = lateralP >= lateralQ ? p : q;
+            float first = Quaternion.Angle(a, m);
+            float second = Quaternion.Angle(m, b);
+            float split = first / Mathf.Max(0.001f, first + second);   // ровная угловая скорость на обоих отрезках
+            return u < split ? Quaternion.Slerp(a, m, u / split) : Quaternion.Slerp(m, b, (u - split) / (1f - split));
+        }
+
+        /// <summary>
         /// Позиция и поворот кисти в пространстве тела. Обычная поза — «готовность» PalmShot: ладони вперёд, пальцы вверх.
         /// </summary>
         void ComputePose(float sx, float ld, float attackW, out Vector3 pos, out Quaternion rot, out float open)

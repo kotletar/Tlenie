@@ -140,6 +140,8 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "follow") StepFollow(gm);
                 else if (scenario == "busfight") StepBusFight(gm);
                 else if (scenario == "handdetail") StepHandDetail(gm);
+                else if (scenario == "handmotion_intro") StepHandMotion(gm, false);
+                else if (scenario == "handmotion_ending") StepHandMotion(gm, true);
                 else if (scenario == "finalstand") StepFinalStand(gm, true);
                 else if (scenario == "finalpassive") StepFinalStand(gm, false);
                 else if (scenario == "econ") StepEcon(gm);
@@ -150,6 +152,7 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "vault") StepVault(gm);
                 else if (scenario == "ending") StepEnding(gm, false);
                 else if (scenario == "endingshot") StepEnding(gm, true);
+                else if (scenario == "endingride") StepEndingRide(gm);
                 else if (scenario == "stats") StepStats(gm);
                 else if (scenario == "enemies") StepEnemies(gm);
                 else if (scenario == "close") StepClose(gm);
@@ -1177,6 +1180,45 @@ namespace PokaGoryu.EditorTools
             }
         }
 
+        /// <summary>
+        /// Без окна: ход рук в предыстории или в концовке кадр за кадром (время идёт само, кадр каждые 8 кадров = 0.13 с). Для проверки того,
+        /// как поворачиваются кисти, когда их поднимают со стола и опускают. Кадры m00..; имя несёт время сценария.
+        /// </summary>
+        static void StepHandMotion(GameManager gm, bool ending)
+        {
+            // участки: время сценария для перемотки (кухонное время), сколько кадров снять
+            float[] seeks = ending
+                ? new float[] { EndingDirector.TKitchen + 5.3f, EndingDirector.TKitchen + 8.7f }
+                : new float[] { IntroDirector.RealTime(18.8f), IntroDirector.RealTime(21.9f) };
+            int[] counts = ending ? new int[] { 16, 10 } : new int[] { 12, 14 };
+            if (frame == 3 && ending) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
+            if (frame == 6)
+            {
+                if (ending)
+                {
+                    if (Bus.Instance != null) Bus.Instance.BoardedCount = 6;
+                    gm.Win();
+                }
+                else gm.StartGame();
+            }
+            if (frame < 14) return;
+            int f = frame - 14;
+            int seg = 0;
+            int off = 0;
+            while (seg < counts.Length && f >= off + counts[seg] * 8 + 30) { off += counts[seg] * 8 + 30; seg++; }
+            if (seg >= counts.Length) { Finish("OK", errors > 0 ? 2 : 0); return; }
+            int local = f - off;
+            if (local == 0)
+            {
+                if (ending) gm.Ending.DebugSeek(seeks[seg]); else gm.Intro.DebugSeek(seeks[seg]);
+            }
+            if (local >= 20 && (local - 20) % 8 == 0 && (local - 20) / 8 < counts[seg])
+            {
+                float now = ending ? gm.Ending.Elapsed - EndingDirector.TKitchen : IntroDirector.KitchenTime(gm.Intro.Elapsed);
+                Capture("m" + seg + "_" + ((local - 20) / 8).ToString("00") + "_" + now.ToString("F2").Replace(',', '.'));
+            }
+        }
+
         static EndingLight detailLight;
 
         /// <summary>
@@ -2076,6 +2118,50 @@ namespace PokaGoryu.EditorTools
             {
                 if (windowed) Shoot(names[slot]);
                 else Capture(names[slot]);
+            }
+        }
+
+        /// <summary>
+        /// Только поездка концовки, подробно: водитель (взгляд на него, он оборачивается), потом надвигающаяся Тьма и поглощение автобуса.
+        /// Кадры r00.. с временем сценария в имени (t0123 = 12.3 с), перемотка DebugSeek, кадр через 12 кадров после неё.
+        /// Окружение для проверок: PG_RIDE_TIMES="2.9,3.3,..." подменяет список времён.
+        /// </summary>
+        static void StepEndingRide(GameManager gm)
+        {
+            float[] times = { 0.5f, 1.8f, 2.5f, 2.9f, 3.3f, 4.0f, 4.6f, 6.0f, 8.0f, 10.0f, 10.9f, 11.6f, 12.2f, 12.8f, 13.3f, 13.7f, 14.0f, 14.3f, 14.6f, 14.9f, 15.2f, 15.6f, 16.0f, 16.6f };
+            string custom = Environment.GetEnvironmentVariable("PG_RIDE_TIMES");
+            if (!string.IsNullOrEmpty(custom))
+            {
+                string[] parts = custom.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                times = new float[parts.Length];
+                for (int i = 0; i < parts.Length; i++) times[i] = float.Parse(parts[i], System.Globalization.CultureInfo.InvariantCulture);
+            }
+            if (frame == 3)
+            {
+                gm.State = GameState.Playing;
+                gm.Hero.Life = 100f;
+            }
+            if (frame == 6)
+            {
+                if (Bus.Instance != null) Bus.Instance.BoardedCount = 6;
+                gm.Win();
+                report.AppendLine("after Win: state=" + gm.State + " ending active=" + gm.Ending.Active + " driver=" + gm.Ending.HasDriver);
+            }
+            if (frame < 10) return;
+            int slot = (frame - 10) / 16;
+            int phase = (frame - 10) % 16;
+            if (slot >= times.Length)
+            {
+                if (frame - (10 + times.Length * 16) == 0) Finish("OK", errors > 0 ? 2 : 0);
+                return;
+            }
+            gm.Hero.Life = 100f;
+            if (phase == 0) gm.Ending.DebugSeek(times[slot]);
+            if (phase == 12)
+            {
+                string name = "r" + slot.ToString("00") + "_t" + Mathf.RoundToInt(times[slot] * 10f).ToString("0000");
+                report.AppendLine(name + " puffs=" + gm.Ending.DarkPuffsDrawn + " cabin=" + gm.Ending.CabinPuffsDrawn);
+                Capture(name);
             }
         }
 

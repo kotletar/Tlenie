@@ -490,7 +490,7 @@ namespace PokaGoryu
             return (2f * u3 - 3f * u2 + 1f) * vs[i] + (u3 - 2f * u2 + u) * h * m0 + (-2f * u3 + 3f * u2) * vs[i + 1] + (u3 - u2) * h * m1;
         }
 
-        static void SampleHand(HKey[] k, float x, out Vector3 p, out Quaternion r, out float o)
+        static void SampleHand(HKey[] k, float x, float side, out Vector3 p, out Quaternion r, out float o)
         {
             if (x <= k[0].T)
             {
@@ -503,7 +503,7 @@ namespace PokaGoryu
             while (i < k.Length - 2 && x >= k[i + 1].T) i++;
             float u = S(k[i].T, k[i + 1].T, x);
             p = Vector3.Lerp(k[i].P, k[i + 1].P, u);
-            r = Quaternion.Slerp(Quaternion.LookRotation(k[i].F, k[i].U), Quaternion.LookRotation(k[i + 1].F, k[i + 1].U), u);
+            r = HeroBody.HandSlerp(Quaternion.LookRotation(k[i].F, k[i].U), Quaternion.LookRotation(k[i + 1].F, k[i + 1].U), u, side);
             o = Mathf.Lerp(k[i].O, k[i + 1].O, u);
         }
 
@@ -587,7 +587,7 @@ namespace PokaGoryu
                 }
                 else
                 {
-                    SampleHand(a == 0 ? KeysL : KeysR, x, out p, out r, out o);
+                    SampleHand(a == 0 ? KeysL : KeysR, x, a == 0 ? -1f : 1f, out p, out r, out o);
                 }
                 hp[a] = p;
                 body.OverridePos[a] = p - Kitchen.SeatRoot;

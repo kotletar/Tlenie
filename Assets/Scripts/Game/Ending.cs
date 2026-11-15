@@ -39,10 +39,11 @@ namespace PokaGoryu
             }
         }
 
-        // Камера в салоне: время, поворот вправо, наклон вниз (градусы). Оглядывается на людей и снова вперёд.
-        static readonly float[] RT = { 0f, 1.8f, 2.8f, 4.0f, 5.6f, 6.6f, 8.0f, 12.0f, 13.6f, 15.0f, 18.4f };
-        static readonly float[] RYaw = { 0f, 1f, -48f, -150f, -150f, -10f, 0f, 0f, -7f, 3f, 0f };
-        static readonly float[] RPit = { 2f, 2f, 2f, 3f, 3f, 3f, 4f, 2f, 0f, 0f, 0f };
+        // Камера в салоне: время, поворот вправо, наклон вниз (градусы). Сначала вперёд, потом на водителя (он оборачивается), на людей
+        // сзади и снова вперёд. Плавность на каждом отрезке (RideStage.Ease): в ключах скорость нулевая, поэтому остановка на водителе настоящая.
+        static readonly float[] RT = { 0f, 1.4f, 2.7f, 3.6f, 5.0f, 6.0f, 7.1f, 8.2f, 12.0f, 13.6f, 15.0f, 18.4f };
+        static readonly float[] RYaw = { 0f, 1f, -62f, -64f, -150f, -150f, -10f, 0f, 0f, -7f, 3f, 0f };
+        static readonly float[] RPit = { 2f, 2f, 2f, 1f, 3f, 3f, 3f, 4f, 2f, 0f, 0f, 0f };
 
         // Камера на кухне: время, поворот, наклон, крен (градусы), смещение головы от обычного положения за столом (м).
         // k < KJolt: щека на сложенных руках, лицо повёрнуто к кружке (она на расстоянии 0.3 м, голова рядом с ней, не в ней).
@@ -236,6 +237,7 @@ namespace PokaGoryu
             }
             if (engineSrc != null) engineSrc.Stop();
             Gfx.ApplyGlobals();
+            ResetPostLook();
             if (body != null)
             {
                 body.OverrideW = 0f;
@@ -261,6 +263,16 @@ namespace PokaGoryu
         void OnDestroy()
         {
             if (ride != null) ride.Destroy();
+            ResetPostLook();
+        }
+
+        /// <summary>Вернуть обычную виньетку и убрать помехи камкордера (в конце поездки их разгоняла Тьма).</summary>
+        static void ResetPostLook()
+        {
+            LowRes lr = LowRes.Instance;
+            if (lr == null) return;
+            lr.Vignette = LowRes.DefaultVignette;
+            lr.ExtraGlitch = 0f;
         }
 
         // ------------------------------------------------------------------ субтитры
@@ -268,7 +280,7 @@ namespace PokaGoryu
         void BuildCaps()
         {
             // как поездка звучит, зависит от того, кто с героем в автобусе
-            string withMe = boarded >= 3 ? "Все со мной. Все живы." : (boarded >= 1 ? "Нас мало, но мы живы." : "Я один. Зато я выбрался.");
+            string withMe = boarded >= 3 ? "Все со мной. Все живы." : (boarded >= 1 ? "Нас мало, но мы живы." : "Со мной только водитель. Но я выбрался.");
             string line = boarded >= 1 ? "— Смотрите, как светло!" : "Как светло...";
             rideCaps = new Cap[]
             {
@@ -321,6 +333,20 @@ namespace PokaGoryu
             if (t >= TKitchen + KEnd) Finish();
         }
 
+        /// <summary>Дым собирается под камеру, когда она уже стоит там, где её увидит кадр (как и спрайты Billboard).</summary>
+        void LateUpdate()
+        {
+            if (!active || ride == null || stage != 0) return;
+            Transform ct = Gfx.CamTransform != null ? Gfx.CamTransform : (pc != null && pc.Cam != null ? pc.Cam.transform : null);
+            if (ct == null) return;
+            ride.DrawDarkness(ct.position, ct.rotation);
+        }
+
+        /// <summary>Для автотестов: сколько клубов Тьмы нарисовано снаружи и в салоне в последнем кадре поездки.</summary>
+        public int DarkPuffsDrawn { get { return ride != null ? ride.DarkPuffsDrawn : 0; } }
+        public int CabinPuffsDrawn { get { return ride != null ? ride.CabinPuffsDrawn : 0; } }
+        public bool HasDriver { get { return ride != null && ride.HasDriver; } }
+
         /// <summary>Пропустить концовку: короткое затемнение и экран итога.</summary>
         public void Skip()
         {
@@ -367,7 +393,7 @@ namespace PokaGoryu
             return (2f * u3 - 3f * u2 + 1f) * vs[i] + (u3 - 2f * u2 + u) * h * m0 + (-2f * u3 + 3f * u2) * vs[i + 1] + (u3 - u2) * h * m1;
         }
 
-        static void SampleHand(HKey[] k, float x, out Vector3 p, out Quaternion r, out float o)
+        static void SampleHand(HKey[] k, float x, float side, out Vector3 p, out Quaternion r, out float o)
         {
             if (x <= k[0].T)
             {
@@ -380,7 +406,7 @@ namespace PokaGoryu
             while (i < k.Length - 2 && x >= k[i + 1].T) i++;
             float u = S(k[i].T, k[i + 1].T, x);
             p = Vector3.Lerp(k[i].P, k[i + 1].P, u);
-            r = Quaternion.Slerp(Quaternion.LookRotation(k[i].F, k[i].U), Quaternion.LookRotation(k[i + 1].F, k[i + 1].U), u);
+            r = HeroBody.HandSlerp(Quaternion.LookRotation(k[i].F, k[i].U), Quaternion.LookRotation(k[i + 1].F, k[i + 1].U), u, side);
             o = Mathf.Lerp(k[i].O, k[i + 1].O, u);
         }
 
@@ -393,6 +419,12 @@ namespace PokaGoryu
         public static float RideDistance(float x)
         {
             return 12f * (x - 2.5f * (1f - Mathf.Exp(-x / 2.5f)));
+        }
+
+        /// <summary>Когда гаснет свет у i-го в салоне: водитель (он первый в списке) раньше всех, потом пассажиры по очереди.</summary>
+        static float DieTime(int i)
+        {
+            return i == 0 ? 13.55f : 13.9f + (i - 1) * 0.30f;
         }
 
         void Evaluate(float real)
@@ -414,6 +446,7 @@ namespace PokaGoryu
         void EnterRide()
         {
             stage = 0;
+            if (ride != null) ride.SetDarknessVisible(true);
             if (kitchen != null) kitchen.Root.gameObject.SetActive(false);
             body.ArmScale = 0.8f;
             body.SetSkinTone(1f);
@@ -429,6 +462,8 @@ namespace PokaGoryu
         {
             stage = 1;
             // автобус и поездка остаются позади: герой за кухонным столом, как в самом начале
+            if (ride != null) ride.SetDarknessVisible(false);
+            ResetPostLook();
             if (engineSrc != null) engineSrc.Stop();
             kitchen.Root.gameObject.SetActive(true);
             kitchen.SetCity(-9999f, 0f);   // утро: окна города не светятся
@@ -457,13 +492,13 @@ namespace PokaGoryu
             Vector3 bp = new Vector3(Mathf.Lerp(start.x, RideStage.RoadX + 1.0f, S(1.0f, 6.0f, t)), start.y, start.z + s);
             bus.transform.position = bp;
 
-            // камера: голова героя в салоне, чуть трясёт на неровностях; перед Тьмой тряска сильнее
-            float shakeK = 1f + 3.0f * S(11.0f, 15.0f, t);
+            // камера: голова героя в салоне, чуть трясёт на неровностях; перед Тьмой тряска сильнее, а когда фронт Тьмы бьёт в автобус, швыряет
+            float shakeK = 1f + 3.0f * S(11.0f, 14.0f, t) + 3.5f * S(14.0f, 15.2f, t);
             Vector3 shake = new Vector3(0.004f * Mathf.Sin(t * 21f), 0.008f * Mathf.Sin(t * 17f + 1f), 0f) * shakeK;
             Vector3 eye = bp + RideStage.SeatEye + shake;
             pc.TeleportTo(eye - headBase, 0f);
-            float yaw = Spline(RT, RYaw, t) + 0.4f * Mathf.Sin(t * 0.7f);
-            float pit = Spline(RT, RPit, t) + 0.3f * Mathf.Sin(t * 1.1f);
+            float yaw = RideStage.Ease(RT, RYaw, t) + 0.4f * Mathf.Sin(t * 0.7f);
+            float pit = RideStage.Ease(RT, RPit, t) + 0.3f * Mathf.Sin(t * 1.1f);
             float roll = 0.5f * Mathf.Sin(t * 0.8f) * shakeK;
             pc.Head.localRotation = Quaternion.Euler(pit, yaw, roll);
 
@@ -489,20 +524,28 @@ namespace PokaGoryu
             }
             for (int i = 0; i < ride.Passengers.Count; i++)
             {
-                float die = 13.8f + i * 0.30f;
+                float die = DieTime(i);
                 float glow = (1f - S(die - 0.15f, die + 0.25f, t)) * flicker;
                 ride.SetPassenger(i, glow, t);
                 ride.Passengers[i].Light.Pos = bp + ride.Passengers[i].Root.localPosition + new Vector3(0f, 0.3f, 0f);
             }
 
-            // дорога, рассвет-приманка, Тьма
-            ride.SetRoadLamps(bp.z, Mathf.Lerp(400f, 0f, S(9.8f, 14.6f, t)));
+            // дорога, рассвет-приманка, Тьма (объёмный дым надвигается на автобус и накрывает его)
+            ride.SetRoadLamps(ride.FrontZ(t));
             float dawnK = S(2.8f, 8.0f, t) * (1f - 0.6f * S(9.6f, 11.8f, t) * (Mathf.PerlinNoise(t * 9f, 5f) > 0.5f ? 1f : 0f));
-            ride.SetDawn(dawnK, S(11.2f, 13.5f, t));
-            ride.SetGate(S(TOpen, 13.6f, t), S(13.9f, TEngulf, t), t);
+            ride.SetDawn(dawnK * (1f - S(13.9f, 15.0f, t)), S(11.2f, 13.5f, t));   // Тьма накрывает зарево, а не светится сквозь себя
+            ride.SetDarkness(t, eye);
 
-            // затемнение: из чёрного, перед поглощением в чёрное (до самой кухни)
-            if (!skipping) fadeA = Mathf.Max(1f - S(0f, TFadeIn, t), S(14.5f, 15.9f, t));
+            // камкордер умирает вместе со светом: края кадра смыкаются, картинку рвёт помехами
+            LowRes lr = LowRes.Instance;
+            if (lr != null)
+            {
+                lr.Vignette = Mathf.Lerp(LowRes.DefaultVignette, 6.5f, S(13.6f, 15.4f, t));
+                lr.ExtraGlitch = 0.5f * S(14.0f, 15.0f, t) * (Mathf.PerlinNoise(t * 17f, 1.3f) > 0.4f ? 1f : 0.3f);
+            }
+
+            // затемнение: из чёрного, потом тьма накрывает экран и он гаснет (чёрный до самой кухни)
+            if (!skipping) fadeA = Mathf.Max(1f - S(0f, TFadeIn, t), S(15.0f, 16.3f, t));
             flashA = 0f;
 
             // звуки
@@ -522,10 +565,11 @@ namespace PokaGoryu
             }
             if (Crossed(12.4f)) ProcAudio.OneShot(sfx, "rumble", 0.65f, 0.8f);
             if (Crossed(13.2f)) ProcAudio.OneShot(sfx, "tide", 0.55f, 0.9f);
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < ride.Passengers.Count; i++)
             {
-                if (Crossed(13.8f + i * 0.30f)) ProcAudio.OneShot(sfx, "lampdie", 0.55f, 0.85f + 0.07f * i);
+                if (Crossed(DieTime(i))) ProcAudio.OneShot(sfx, "lampdie", 0.55f, 0.85f + 0.07f * i);
             }
+            if (Crossed(14.15f)) ProcAudio.OneShot(sfx, "eater", 0.6f, 0.6f);   // фронт Тьмы бьёт в автобус
             if (Crossed(TEngulf - 0.1f))
             {
                 ProcAudio.OneShot(sfx, "tide", 1.0f, 0.7f);
@@ -543,10 +587,16 @@ namespace PokaGoryu
             Vector4 horizon = Vector4.Lerp(Vector4.Lerp(new Vector4(0.050f, 0.064f, 0.104f, 0f), new Vector4(0.95f, 0.62f, 0.40f, 0f), day), new Vector4(0.50f, 0.15f, 0.65f, 0f), vio);
             Vector4 zenith = Vector4.Lerp(Vector4.Lerp(new Vector4(0.006f, 0.010f, 0.026f, 0f), new Vector4(0.20f, 0.28f, 0.55f, 0f), day), new Vector4(0.07f, 0.02f, 0.14f, 0f), vio);
             Vector4 glow = Vector4.Lerp(Vector4.Lerp(new Vector4(0.95f, 0.62f, 0.32f, 0f) * 0.35f, new Vector4(1.0f, 0.78f, 0.45f, 0f), day), new Vector4(0.60f, 0.22f, 1.0f, 0f), vio);
+            // Тьма накрыла автобус: небо гаснет, туман сгущается до черноты, и всё, что дальше пары метров, тонет в нём
+            float eng = S(13.9f, 15.3f, t);
+            horizon = Vector4.Lerp(horizon, new Vector4(0.030f, 0.010f, 0.055f, 0f), eng);
+            zenith = Vector4.Lerp(zenith, new Vector4(0.004f, 0.002f, 0.010f, 0f), eng);
+            glow = Vector4.Lerp(glow, new Vector4(0.25f, 0.08f, 0.45f, 0f), eng);
             Shader.SetGlobalVector("_PG_SkyHorizon", horizon);
             Shader.SetGlobalVector("_PG_SkyZenith", zenith);
             Shader.SetGlobalVector("_PG_SkyGlow", glow);
-            Shader.SetGlobalFloat("_PG_Fog", Mathf.Lerp(0.034f, 0.011f, S(3.5f, 6.5f, t)) * (1f + 1.2f * vio));
+            Shader.SetGlobalFloat("_PG_Fog", Mathf.Lerp(0.034f, 0.011f, S(3.5f, 6.5f, t)) * (1f + 1.2f * vio) + 0.22f * eng);
+            Shader.SetGlobalVector("_PG_FogColor", Vector4.Lerp(new Vector4(0.040f * b, 0.054f * b, 0.088f * b, 0f), new Vector4(0.016f, 0.006f, 0.030f, 0f), eng));
             Shader.SetGlobalFloat("_PG_Exposure", 1.7f * b);   // в тесном салоне ближние лампы не должны выжигать стены (в предыстории так же)
         }
 
@@ -640,7 +690,7 @@ namespace PokaGoryu
                 Vector3 p;
                 Quaternion r;
                 float o;
-                SampleHand(a == 0 ? KeysL : KeysR, k, out p, out r, out o);
+                SampleHand(a == 0 ? KeysL : KeysR, k, a == 0 ? -1f : 1f, out p, out r, out o);
                 body.OverridePos[a] = p - Kitchen.SeatRoot;
                 body.OverrideRot[a] = r;
                 body.OverrideOpen[a] = o;
@@ -699,6 +749,7 @@ namespace PokaGoryu
             Shader.SetGlobalVector("_PG_SkyZenith", new Vector4(0.50f, 0.70f, 1.05f, 0f));
             Shader.SetGlobalVector("_PG_SkyGlow", new Vector4(1.0f, 0.84f, 0.58f, 0f));
             Shader.SetGlobalFloat("_PG_Fog", 0.004f);
+            Shader.SetGlobalVector("_PG_FogColor", new Vector4(0.040f * b, 0.054f * b, 0.088f * b, 0f));   // поездка красила туман в чёрное
             Shader.SetGlobalFloat("_PG_Exposure", 1.7f * b);
         }
 

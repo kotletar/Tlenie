@@ -532,8 +532,25 @@ namespace PokaGoryu
             public bool scarf, pack;
         }
 
+        /// <summary>Внешность водителя автобуса (концовка): форменная куртка, фуражка со значком, седина, без шарфа и рюкзака.</summary>
+        public const int DriverLook = -1;
+
+        /// <summary>Основание шеи, м над землёй: вокруг этой точки поворачивается отдельная голова (HumanBody, часть 2).</summary>
+        public const float HeadPivotY = 1.5f;
+
         static HumanStyle LookOf(int index)
         {
+            if (index == DriverLook)
+            {
+                HumanStyle d = LookOf(11);   // кожа, штаны и обувь как у обычного человека, остальное — форма
+                d.coat = Col(40, 50, 74);
+                d.coatLow = Dim(d.coat, 0.72f);
+                d.hair = Col(112, 112, 110);
+                d.style = 2;
+                d.scarf = false;
+                d.pack = false;
+                return d;
+            }
             System.Random rng = new System.Random(index * 7919 + 13);
             Color c = Color.HSVToRGB((index * 0.137f) % 1f, 0.30f, 0.34f);
             HumanStyle s = new HumanStyle();
@@ -559,63 +576,94 @@ namespace PokaGoryu
         /// </summary>
         public static void HumanBody(MeshBatch b, int index)
         {
+            HumanBody(b, index, 0);
+        }
+
+        /// <summary>
+        /// То же по частям: 0 — всё вместе; 1 — туловище с шеей, шарфом и рюкзаком; 2 — одна голова (лицо, причёска, капюшон или кепка)
+        /// с началом в основании шеи (HeadPivotY): её можно поворачивать отдельно (водитель оглядывается).
+        /// </summary>
+        public static void HumanBody(MeshBatch b, int index, int part)
+        {
             HumanStyle s = LookOf(index);
-            Vector3 o = Vector3.zero;
-            LBoxAll(b, o, 0f, new Vector3(0f, 0.88f, 0f), new Vector3(0.5f, 0.32f, 0.29f), s.coatLow);
-            LBoxAll(b, o, 0f, new Vector3(0f, 1.2f, 0f), new Vector3(0.46f, 0.34f, 0.26f), s.coat);
-            LBoxAll(b, o, 0f, new Vector3(0f, 1.4f, 0f), new Vector3(0.56f, 0.1f, 0.28f), Dim(s.coat, 1.1f));
-            LBoxAll(b, o, 0f, new Vector3(0f, 1.0f, 0.148f), new Vector3(0.025f, 0.62f, 0.012f), Dim(s.coat, 0.55f));   // застёжка
-            for (int i = 0; i < 3; i++) LBoxAll(b, o, 0f, new Vector3(0.035f, 0.82f + i * 0.17f, 0.152f), new Vector3(0.03f, 0.03f, 0.012f), Col(150, 138, 96));
-            LBoxAll(b, o, 0f, new Vector3(0f, 1.5f, 0f), new Vector3(0.12f, 0.08f, 0.12f), s.skinDark);   // шея
+            Vector3 o = part == 2 ? new Vector3(0f, -HeadPivotY, 0f) : Vector3.zero;
+            if (part != 2)
+            {
+                LBoxAll(b, o, 0f, new Vector3(0f, 0.88f, 0f), new Vector3(0.5f, 0.32f, 0.29f), s.coatLow);
+                LBoxAll(b, o, 0f, new Vector3(0f, 1.2f, 0f), new Vector3(0.46f, 0.34f, 0.26f), s.coat);
+                LBoxAll(b, o, 0f, new Vector3(0f, 1.4f, 0f), new Vector3(0.56f, 0.1f, 0.28f), Dim(s.coat, 1.1f));
+                LBoxAll(b, o, 0f, new Vector3(0f, 1.0f, 0.148f), new Vector3(0.025f, 0.62f, 0.012f), Dim(s.coat, 0.55f));   // застёжка
+                for (int i = 0; i < 3; i++) LBoxAll(b, o, 0f, new Vector3(0.035f, 0.82f + i * 0.17f, 0.152f), new Vector3(0.03f, 0.03f, 0.012f), Col(150, 138, 96));
+                LBoxAll(b, o, 0f, new Vector3(0f, 1.5f, 0f), new Vector3(0.12f, 0.08f, 0.12f), s.skinDark);   // шея
+                if (index == DriverLook) LBoxAll(b, o, 0f, new Vector3(0f, 1.468f, 0.07f), new Vector3(0.2f, 0.05f, 0.12f), Col(176, 174, 166));   // воротник рубашки
+            }
 
-            // голова и лицо (передняя грань головы — z = +0.12)
-            LBoxAll(b, o, 0f, new Vector3(0f, 1.63f, 0f), new Vector3(0.24f, 0.26f, 0.24f), s.skin);
-            LBoxAll(b, o, 0f, new Vector3(-0.125f, 1.62f, 0.0f), new Vector3(0.02f, 0.06f, 0.04f), s.skinDark);        // уши
-            LBoxAll(b, o, 0f, new Vector3(0.125f, 1.62f, 0.0f), new Vector3(0.02f, 0.06f, 0.04f), s.skinDark);
-            LBoxAll(b, o, 0f, new Vector3(0f, 1.615f, 0.13f), new Vector3(0.035f, 0.055f, 0.03f), Dim(s.skin, 0.88f));  // нос
-            LBoxAll(b, o, 0f, new Vector3(0f, 1.567f, 0.123f), new Vector3(0.075f, 0.014f, 0.012f), Col(112, 52, 50));  // рот
-            LBoxAll(b, o, 0f, new Vector3(-0.055f, 1.69f, 0.123f), new Vector3(0.06f, 0.014f, 0.012f), Dim(s.hair, 0.8f));   // брови
-            LBoxAll(b, o, 0f, new Vector3(0.055f, 1.69f, 0.123f), new Vector3(0.06f, 0.014f, 0.012f), Dim(s.hair, 0.8f));
+            if (part != 1)
+            {
+                // голова и лицо (передняя грань головы — z = +0.12)
+                LBoxAll(b, o, 0f, new Vector3(0f, 1.63f, 0f), new Vector3(0.24f, 0.26f, 0.24f), s.skin);
+                LBoxAll(b, o, 0f, new Vector3(-0.125f, 1.62f, 0.0f), new Vector3(0.02f, 0.06f, 0.04f), s.skinDark);        // уши
+                LBoxAll(b, o, 0f, new Vector3(0.125f, 1.62f, 0.0f), new Vector3(0.02f, 0.06f, 0.04f), s.skinDark);
+                LBoxAll(b, o, 0f, new Vector3(0f, 1.615f, 0.13f), new Vector3(0.035f, 0.055f, 0.03f), Dim(s.skin, 0.88f));  // нос
+                LBoxAll(b, o, 0f, new Vector3(0f, 1.567f, 0.123f), new Vector3(0.075f, 0.014f, 0.012f), Col(112, 52, 50));  // рот
+                LBoxAll(b, o, 0f, new Vector3(-0.055f, 1.69f, 0.123f), new Vector3(0.06f, 0.014f, 0.012f), Dim(s.hair, 0.8f));   // брови
+                LBoxAll(b, o, 0f, new Vector3(0.055f, 1.69f, 0.123f), new Vector3(0.06f, 0.014f, 0.012f), Dim(s.hair, 0.8f));
 
-            if (s.style == 0)
-            {
-                // причёска: макушка, затылок, чёлка
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.755f, -0.01f), new Vector3(0.26f, 0.09f, 0.26f), s.hair);
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.66f, -0.115f), new Vector3(0.25f, 0.23f, 0.05f), s.hair);
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.728f, 0.125f), new Vector3(0.245f, 0.045f, 0.03f), s.hair);
-                LBoxAll(b, o, 0f, new Vector3(-0.128f, 1.67f, -0.02f), new Vector3(0.02f, 0.17f, 0.2f), s.hair);
-                LBoxAll(b, o, 0f, new Vector3(0.128f, 1.67f, -0.02f), new Vector3(0.02f, 0.17f, 0.2f), s.hair);
+                if (s.style == 0)
+                {
+                    // причёска: макушка, затылок, чёлка
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.755f, -0.01f), new Vector3(0.26f, 0.09f, 0.26f), s.hair);
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.66f, -0.115f), new Vector3(0.25f, 0.23f, 0.05f), s.hair);
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.728f, 0.125f), new Vector3(0.245f, 0.045f, 0.03f), s.hair);
+                    LBoxAll(b, o, 0f, new Vector3(-0.128f, 1.67f, -0.02f), new Vector3(0.02f, 0.17f, 0.2f), s.hair);
+                    LBoxAll(b, o, 0f, new Vector3(0.128f, 1.67f, -0.02f), new Vector3(0.02f, 0.17f, 0.2f), s.hair);
+                }
+                else if (s.style == 1)
+                {
+                    // капюшон: лицо открыто (раньше здесь был чёрный квадрат)
+                    Color32 hood = Dim(s.coat, 0.85f);
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.785f, -0.015f), new Vector3(0.31f, 0.07f, 0.32f), hood);
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.65f, -0.15f), new Vector3(0.31f, 0.3f, 0.06f), hood);
+                    LBoxAll(b, o, 0f, new Vector3(-0.15f, 1.65f, -0.02f), new Vector3(0.05f, 0.3f, 0.3f), hood);
+                    LBoxAll(b, o, 0f, new Vector3(0.15f, 1.65f, -0.02f), new Vector3(0.05f, 0.3f, 0.3f), hood);
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.748f, 0.145f), new Vector3(0.25f, 0.035f, 0.05f), Dim(hood, 0.9f));
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.715f, 0.123f), new Vector3(0.2f, 0.03f, 0.012f), Dim(s.hair, 1.1f));   // прядь из-под капюшона
+                }
+                else
+                {
+                    // кепка с козырьком и затылок
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.775f, 0f), new Vector3(0.27f, 0.07f, 0.27f), Dim(s.coat, 0.6f));
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.735f, 0.14f), new Vector3(0.27f, 0.025f, 0.12f), Dim(s.coat, 0.5f));
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.67f, -0.115f), new Vector3(0.245f, 0.17f, 0.05f), s.hair);
+                    if (index == DriverLook)
+                    {
+                        LBoxAll(b, o, 0f, new Vector3(0f, 1.78f, 0.138f), new Vector3(0.055f, 0.035f, 0.012f), Col(190, 160, 70));   // значок на фуражке
+                        LBoxAll(b, o, 0f, new Vector3(-0.126f, 1.7f, 0f), new Vector3(0.02f, 0.1f, 0.2f), Dim(s.hair, 0.9f));       // седые виски
+                        LBoxAll(b, o, 0f, new Vector3(0.126f, 1.7f, 0f), new Vector3(0.02f, 0.1f, 0.2f), Dim(s.hair, 0.9f));
+                    }
+                }
             }
-            else if (s.style == 1)
+            if (part != 2)
             {
-                // капюшон: лицо открыто (раньше здесь был чёрный квадрат)
-                Color32 hood = Dim(s.coat, 0.85f);
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.785f, -0.015f), new Vector3(0.31f, 0.07f, 0.32f), hood);
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.65f, -0.15f), new Vector3(0.31f, 0.3f, 0.06f), hood);
-                LBoxAll(b, o, 0f, new Vector3(-0.15f, 1.65f, -0.02f), new Vector3(0.05f, 0.3f, 0.3f), hood);
-                LBoxAll(b, o, 0f, new Vector3(0.15f, 1.65f, -0.02f), new Vector3(0.05f, 0.3f, 0.3f), hood);
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.748f, 0.145f), new Vector3(0.25f, 0.035f, 0.05f), Dim(hood, 0.9f));
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.715f, 0.123f), new Vector3(0.2f, 0.03f, 0.012f), Dim(s.hair, 1.1f));   // прядь из-под капюшона
-            }
-            else
-            {
-                // кепка с козырьком и затылок
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.775f, 0f), new Vector3(0.27f, 0.07f, 0.27f), Dim(s.coat, 0.6f));
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.735f, 0.14f), new Vector3(0.27f, 0.025f, 0.12f), Dim(s.coat, 0.5f));
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.67f, -0.115f), new Vector3(0.245f, 0.17f, 0.05f), s.hair);
-            }
-            if (s.scarf) LBoxAll(b, o, 0f, new Vector3(0f, 1.455f, 0.01f), new Vector3(0.3f, 0.1f, 0.3f), Col(120, 40, 36));
-            if (s.pack)
-            {
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.15f, -0.2f), new Vector3(0.34f, 0.4f, 0.14f), Col(48, 58, 44));
-                LBoxAll(b, o, 0f, new Vector3(0f, 1.04f, -0.275f), new Vector3(0.26f, 0.16f, 0.02f), Col(38, 46, 36));
+                if (s.scarf) LBoxAll(b, o, 0f, new Vector3(0f, 1.455f, 0.01f), new Vector3(0.3f, 0.1f, 0.3f), Col(120, 40, 36));
+                if (s.pack)
+                {
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.15f, -0.2f), new Vector3(0.34f, 0.4f, 0.14f), Col(48, 58, 44));
+                    LBoxAll(b, o, 0f, new Vector3(0f, 1.04f, -0.275f), new Vector3(0.26f, 0.16f, 0.02f), Col(38, 46, 36));
+                }
             }
         }
 
         /// <summary>Глаза: открытые (белок и зрачок) или закрытые (тёмная чёрточка). Рисуются перед лицом, начало — как у тела.</summary>
         public static void HumanEyes(MeshBatch b, int index, bool open)
         {
-            Vector3 o = Vector3.zero;
+            HumanEyes(b, index, open, 0f);
+        }
+
+        /// <summary>pivotY больше нуля: глаза строятся от основания шеи на этой высоте (для отдельной головы, HumanBody часть 2).</summary>
+        public static void HumanEyes(MeshBatch b, int index, bool open, float pivotY)
+        {
+            Vector3 o = new Vector3(0f, -pivotY, 0f);
             for (int side = -1; side <= 1; side += 2)
             {
                 float x = side * 0.055f;

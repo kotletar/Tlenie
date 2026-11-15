@@ -14,6 +14,9 @@ namespace PokaGoryu
         public bool Enabled = true;
         public int TargetHeight = 360;
         public float Glitch;        // 0..1: сбой картинки (ставит игра при уроне)
+        public float ExtraGlitch;   // 0..1: помехи сверх урона (концовка: Тьма накрывает автобус)
+        public const float DefaultVignette = 2f;
+        public float Vignette = DefaultVignette;   // сила виньетки; концовка смыкает края кадра
 
         const int PostLayer = 31;
         const int FeatherLayer = 30;
@@ -114,7 +117,8 @@ namespace PokaGoryu
             quad.localScale = new Vector3(2f * aspect, 2f, 1f);
             postMat.mainTexture = rt;
             postMat.SetFloat("_Brightness", Gfx.Brightness);
-            postMat.SetFloat("_Glitch", Glitch);
+            postMat.SetFloat("_Glitch", Mathf.Clamp01(Glitch + ExtraGlitch));
+            postMat.SetFloat("_Vignette", Vignette);
         }
     }
 }

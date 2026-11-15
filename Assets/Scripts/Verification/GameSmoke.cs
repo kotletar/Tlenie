@@ -437,9 +437,36 @@ namespace PokaGoryu
             Vector3 busSeat = Bus.Instance.transform.position + RideStage.SeatEye;
             Check(Vector3.Distance(gm.Player.Cam.transform.position, busSeat) < 0.6f && Bus.Instance.transform.position.z > Bus.Instance.StartPos.z,
                 "ending: the camera rides inside the moving bus");
+            // Поворот кистей между «ладонью вниз» и «ладонью к лицу»: правая ладонь идёт влево, левая вправо (тыл смотрит наружу), без выворота.
+            {
+                Quaternion palmDown = Quaternion.LookRotation(new Vector3(0f, -0.05f, 1f), Vector3.up);
+                Quaternion palmRaised = Quaternion.LookRotation(new Vector3(0f, 1f, -0.2f), new Vector3(0f, 0f, 1f));
+                Vector3 backRight = HeroBody.HandSlerp(palmDown, palmRaised, 0.25f, 1f) * Vector3.up;
+                Vector3 backLeft = HeroBody.HandSlerp(palmDown, palmRaised, 0.25f, -1f) * Vector3.up;
+                Check(backRight.x > 0.5f && backLeft.x < -0.5f,
+                    "hands turn the logical way: right palm to the left, left palm to the right (back of hand x " + backRight.x.ToString("0.00") + " / " + backLeft.x.ToString("0.00") + ")");
+                float handTotal = 0f, handWorst = 0f;
+                Quaternion handPrev = palmDown;
+                for (int i = 1; i <= 40; i++)
+                {
+                    Quaternion now = HeroBody.HandSlerp(palmDown, palmRaised, i / 40f, 1f);
+                    float step = Quaternion.Angle(handPrev, now);
+                    handTotal += step; handWorst = Mathf.Max(handWorst, step); handPrev = now;
+                }
+                Check(handTotal < 260f && handWorst < handTotal / 40f * 2f && Quaternion.Angle(handPrev, palmRaised) < 0.5f,
+                    "the hand turn is smooth and lands on the key (path " + handTotal.ToString("0") + " deg, worst step " + handWorst.ToString("0.0") + ")");
+            }
             gm.Ending.DebugSeek(EndingDirector.TOpen + 1.5f);
             yield return new WaitForSecondsRealtime(0.3f);
             Check(gm.Ending.DarknessVisible, "ending: the dawn ahead turns out to be the Darkness");
+            Check(gm.Ending.HasDriver, "ending: a driver sits at the wheel of the bus");
+            // Тьма — объёмный дым, который надвигается на автобус и накрывает его, а потом просачивается в салон
+            gm.Ending.DebugSeek(14.2f);
+            yield return new WaitForSecondsRealtime(0.3f);
+            Check(gm.Ending.DarkPuffsDrawn > 100, "ending: the Darkness is a wall of smoke that reaches the bus (" + gm.Ending.DarkPuffsDrawn + " puffs drawn)");
+            gm.Ending.DebugSeek(15.3f);
+            yield return new WaitForSecondsRealtime(0.3f);
+            Check(gm.Ending.CabinPuffsDrawn > 20, "ending: the Darkness seeps into the cabin (" + gm.Ending.CabinPuffsDrawn + " puffs drawn)");
             gm.Ending.DebugSeek(EndingDirector.TKitchen + 0.5f);
             yield return new WaitForSecondsRealtime(0.4f);
             Vector3 kitchenSeat = gm.Intro.AcquireKitchen().World(Kitchen.SeatRoot);

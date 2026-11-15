@@ -54,6 +54,9 @@
 ./docs/verification/run_smoke.ps1 -Scenario vault
 ./docs/verification/run_smoke.ps1 -Scenario ending
 ./docs/verification/run_smoke.ps1 -Scenario endingshot -Windowed
+./docs/verification/run_smoke.ps1 -Scenario endingride
+./docs/verification/run_smoke.ps1 -Scenario handmotion_intro
+./docs/verification/run_smoke.ps1 -Scenario handmotion_ending
 ./docs/verification/run_smoke.ps1 -Scenario finalstand
 ./docs/verification/run_smoke.ps1 -Scenario finalpassive
 ./docs/verification/run_smoke.ps1 -Scenario handdetail
@@ -67,6 +70,11 @@
 через зеркала и линзу, горящая печать, открытая каморка (кадры в папке результата).
 `ending` запускает настоящую концовку и снимает по кадру из каждого её момента (поездка, Тьма, кухня) и пишет зазоры до кружки и
 стола. `endingshot` делает то же в окне редактора, чтобы в кадры попали субтитры, чёрные полосы, титульная плашка и экран результата.
+`endingride` снимает одну поездку подробно: водитель (взгляд на него, он оборачивается), надвигающаяся Тьма, поглощение, дым в салоне;
+в имени кадра время сценария (`r12_t0122` — 12,2 с), в отчёте для каждого кадра сколько клубов дыма нарисовано снаружи и в салоне.
+Свои времена задаёт переменная окружения `PG_RIDE_TIMES="2.9,12.2,14.0"`. Затемнение экрана и субтитры рисует IMGUI, поэтому в этих
+кадрах их нет (они есть в `endingshot`). `handmotion_intro` и `handmotion_ending` снимают кисти каждые 8 кадров на каждом отрезке
+сценария: по контактным листам видно, в какую сторону поворачивается каждая кисть и нет ли выворотов.
 
 `finalstand` и `finalpassive` гонят последнюю минуту целиком (3600 кадров по 1/60 с, около минуты работы): герой стоит у двери
 автобуса, двигатель заведён. В первом герой умелый (аура на минимуме, огонь по Пожирателям и вплотную подошедшим Теням, осколки
