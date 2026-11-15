@@ -374,8 +374,100 @@ namespace PokaGoryu
 
         public static readonly Color32 FleshDark = new Color32(30, 18, 46, 255);
         public static readonly Color32 FleshLight = new Color32(52, 30, 72, 255);
+        static readonly Color32 Bone = new Color32(190, 178, 160, 255);
+        static readonly Color32 BoneDark = new Color32(124, 108, 94, 255);
 
-        /// <summary>Туша: бугристая масса с хребтом шипов и широкой впадиной пасти спереди (зубы верхней челюсти и губа — часть меша).</summary>
+        // Пасть плоская, спереди туши. Контур — суперэллипс: шире и «квадратнее» овала, углы пасти уходят в оскал.
+        public const float MouthCy = 1.62f;
+        public const float MouthCz = 1.98f;
+        public const float MouthW = 1.50f;
+        const float MouthH = 0.74f;
+
+        /// <summary>Точка контура пасти (x, y от её центра) под углом a; k — масштаб (1 — кромка).</summary>
+        static Vector2 MouthPoint(float a, float k)
+        {
+            float c = Mathf.Cos(a);
+            float s = Mathf.Sin(a);
+            const float e = 2f / 2.7f;
+            return new Vector2(Mathf.Sign(c) * Mathf.Pow(Mathf.Abs(c), e) * MouthW * k, Mathf.Sign(s) * Mathf.Pow(Mathf.Abs(s), e) * MouthH * k);
+        }
+
+        /// <summary>Четырёхугольник лицом наружу от точки inside (для выпуклых тел: порядок вершин заранее неизвестен).</summary>
+        static void OutQuad(MeshBatch b, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, Vector3 inside, Color32 col)
+        {
+            Vector3 n = Vector3.Cross(p1 - p0, p2 - p0);
+            Vector3 mid = (p0 + p1 + p2 + p3) * 0.25f;
+            if (Vector3.Dot(n, mid - inside) >= 0f) b.Quad(p0, p1, p2, p3, col);
+            else b.Quad(p3, p2, p1, p0, col);
+        }
+
+        static void OutTri(MeshBatch b, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 inside, Color32 col)
+        {
+            Vector3 n = Vector3.Cross(p1 - p0, p2 - p0);
+            Vector3 mid = (p0 + p1 + p2) / 3f;
+            if (Vector3.Dot(n, mid - inside) >= 0f) b.Tri(p0, p1, p2, col);
+            else b.Tri(p0, p2, p1, col);
+        }
+
+        /// <summary>Призма: выпуклый многоугольник (x, y) выдавлен по Z от z0 до z1, центр координат — origin; грани смотрят наружу.</summary>
+        static void Slab(MeshBatch b, Vector3 origin, Vector2[] poly, float z0, float z1, Color32 side, Color32 front)
+        {
+            int n = poly.Length;
+            Vector2 cm = Vector2.zero;
+            for (int i = 0; i < n; i++) cm += poly[i] / n;
+            Vector3 inside = origin + new Vector3(cm.x, cm.y, (z0 + z1) * 0.5f);
+            Vector3 cf = origin + new Vector3(cm.x, cm.y, z1);
+            Vector3 cb = origin + new Vector3(cm.x, cm.y, z0);
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                Vector3 a0 = origin + new Vector3(poly[i].x, poly[i].y, z0);
+                Vector3 a1 = origin + new Vector3(poly[j].x, poly[j].y, z0);
+                Vector3 b1 = origin + new Vector3(poly[j].x, poly[j].y, z1);
+                Vector3 b0 = origin + new Vector3(poly[i].x, poly[i].y, z1);
+                OutQuad(b, a0, a1, b1, b0, inside, side);
+                OutTri(b, cf, b0, b1, inside, front);
+                OutTri(b, cb, a1, a0, inside, side);
+            }
+        }
+
+        /// <summary>Изогнутый шип или рог из segs усечённых конусов: направление dir плавно заворачивает к bend. Возвращает точки стыков звеньев.</summary>
+        static Vector3[] Horn(MeshBatch b, Vector3 from, Vector3 dir, Vector3 bend, float r0, float len, int segs, Color32 col)
+        {
+            dir.Normalize();
+            Vector3[] pts = new Vector3[segs + 1];
+            pts[0] = from;
+            Vector3 p = from;
+            float r = r0;
+            float segLen = len / segs;
+            for (int s = 0; s < segs; s++)
+            {
+                Vector3 d = (dir + bend * ((s + 0.5f) / segs)).normalized;
+                float r1 = s == segs - 1 ? 0.003f : Mathf.Lerp(r0, 0.003f, (s + 1f) / segs);
+                b.Frustum(p + d * (segLen * 0.5f), d, r, r1, segLen * 1.05f, 6, Mul(col, 1f - 0.05f * s), s == 0, false);
+                p += d * segLen;
+                pts[s + 1] = p;
+                r = r1;
+            }
+            return pts;
+        }
+
+        /// <summary>Зуб из двух звеньев: основание жёлтое и тёмное у дёсен, острие светлое и чуть загнутое (bend прибавляется к направлению у острия).</summary>
+        static void Tooth(MeshBatch b, Vector3 from, Vector3 dir, Vector3 bend, float r0, float len, int variant)
+        {
+            Color32 root = Mul(C(196, 168, 118), 0.82f + 0.30f * Rnd(variant, 1, 151));
+            Color32 tip = Mul(C(238, 232, 214), 0.88f + 0.20f * Rnd(variant, 2, 152));
+            dir.Normalize();
+            Vector3 mid = from + dir * (len * 0.5f);
+            Vector3 d2 = (dir + bend).normalized;
+            b.Frustum(from + dir * (len * 0.25f), dir, r0, r0 * 0.62f, len * 0.52f, 5, root, true, false);
+            b.Frustum(mid + d2 * (len * 0.25f), d2, r0 * 0.62f, 0.003f, len * 0.52f, 5, tip, false, false);
+        }
+
+        /// <summary>
+        /// Туша: бугристая масса с рубцами и тёмными жилами, хребет шипов, бычьи рога дугой, рёбра торчат из боков, венец шипов, бородавки;
+        /// спереди широкая впадина пасти (губа и зубы верхней челюсти — часть меша).
+        /// </summary>
         public static Mesh EaterBody()
         {
             return Get("EaterBody", delegate(MeshBatch b)
@@ -391,35 +483,48 @@ namespace PokaGoryu
                     new Ring(4.55f, 0.30f, 0.30f, 0f, 0.08f)
                 };
                 int sides = 18;
+                Color32 scar = C(120, 106, 134);
                 Loft(b, rings, sides, true, true,
                     delegate(int i, int j) { return 0.88f + 0.22f * Rnd(i, j, 101) + 0.06f * Mathf.Sin(j * 1.7f + i); },
                     null,
                     delegate(int i, int j)
                     {
-                        // кожа: поперечные складки (чередование тёмных и светлых поясов), пятна по шуму
+                        // кожа: поперечные складки (тёмные и светлые пояса), пятна по шуму, тёмные жилы и бледные рубцы
                         float band = (i % 2 == 0) ? 0.85f : 1.1f;
                         float spot = 0.8f + 0.4f * Rnd(j, i, 102);
-                        return Mul(Mix(FleshDark, FleshLight, i / 6f), band * spot);
+                        Color32 c = Mul(Mix(FleshDark, FleshLight, i / 6f), band * spot);
+                        float r = Rnd(j, i, 103);
+                        if (r > 0.88f) c = Mul(c, 0.45f);
+                        else if (r < 0.05f && i >= 2) c = Mix(c, scar, 0.40f);
+                        return c;
                     });
-                // хребет: ряд шипов вдоль спины и макушки
+                // хребет: ряд шипов вдоль спины и макушки, бледнеют к концам
+                for (int k = 0; k < 11; k++)
+                {
+                    float u = k / 10f;
+                    Vector3 from = new Vector3(0f, Mathf.Lerp(3.95f, 1.6f, u), Mathf.Lerp(-0.25f, -1.9f, u));
+                    Vector3 dir = new Vector3(0f, 1f - u * 0.4f, -0.5f - u);
+                    Spike(b, from, dir, 0.15f - 0.05f * u, 0.62f - 0.18f * u + 0.12f * Rnd(k, 3, 161), 6, Mix(FleshLight, Bone, 0.45f));
+                }
+                // венец шипов вокруг макушки
                 for (int k = 0; k < 9; k++)
                 {
-                    float u = k / 8f;
-                    Vector3 from = new Vector3(0f, Mathf.Lerp(3.9f, 1.6f, u), Mathf.Lerp(-0.2f, -1.9f, u));
-                    Vector3 dir = new Vector3(0f, 1f - u * 0.4f, -0.5f - u);
-                    Spike(b, from, dir, 0.14f - 0.05f * u, 0.55f - 0.15f * u, 6, Mul(FleshLight, 0.8f));
+                    float a = k * 6.2831853f / 9f + 0.3f;
+                    Vector3 from = new Vector3(Mathf.Cos(a) * 1.05f, 3.95f, 0.10f + Mathf.Sin(a) * 0.92f);
+                    Spike(b, from, new Vector3(Mathf.Cos(a) * 0.6f, 1f, Mathf.Sin(a) * 0.6f), 0.07f, 0.30f + 0.18f * Rnd(k, 13, 163), 5, Mix(FleshLight, Bone, 0.5f));
                 }
-                // рога над глазами: у каждого два изогнутых внутрь звена; клыки по углам пасти
-                Color32 horn = C(78, 62, 78);
-                Color32 tusk = C(226, 220, 198);
+                Color32 horn = C(84, 66, 84);
                 for (int side = -1; side <= 1; side += 2)
                 {
-                    Vector3 h0 = new Vector3(side * 1.05f, 3.85f, 0.65f);
-                    Vector3 d0 = new Vector3(side * 0.45f, 1f, 0.10f);
-                    Spike(b, h0, d0, 0.19f, 0.75f, 6, horn);
-                    Vector3 h1 = h0 + d0.normalized * 0.70f;
-                    Spike(b, h1, new Vector3(side * 0.10f, 1f, 0.35f), 0.11f, 0.55f, 6, horn);
-                    Spike(b, new Vector3(side * 1.30f, 1.40f, 1.98f), new Vector3(side * 0.45f, 1f, 0.30f), 0.12f, 0.70f, 6, tusk);
+                    // большие рога бычьей дугой: вверх и наружу, потом вперёд и внутрь; сзади рожки поменьше
+                    Horn(b, new Vector3(side * 1.00f, 3.85f, 0.55f), new Vector3(side * 0.55f, 1f, -0.05f), new Vector3(-side * 0.75f, -0.35f, 1.05f), 0.26f, 1.7f, 5, horn);
+                    Horn(b, new Vector3(side * 0.55f, 4.05f, -0.15f), new Vector3(side * 0.30f, 1f, -0.35f), new Vector3(-side * 0.2f, 0f, 0.5f), 0.13f, 0.75f, 3, horn);
+                    // рёбра прорвали бока: бледные костяные дуги, загнутые назад и вверх
+                    for (int k = 0; k < 3; k++)
+                    {
+                        Vector3 from = new Vector3(side * (2.15f - 0.05f * k), 2.05f + 0.50f * k, 0.55f - 0.65f * k);
+                        Horn(b, from, new Vector3(side * 1f, 0.25f, -0.35f), new Vector3(0f, 0.55f, -0.9f), 0.085f - 0.012f * k, 0.95f - 0.12f * k, 3, Bone);
+                    }
                 }
                 // бородавчатые наросты по бокам
                 for (int k = 0; k < 14; k++)
@@ -431,102 +536,160 @@ namespace PokaGoryu
                     if (c.z > 0.9f && y > 0.9f && y < 2.9f) continue;   // не на пасти
                     Ball(b, c, new Vector3(0.22f, 0.2f, 0.22f), 6, 3, Mul(FleshLight, 1.1f), null);
                 }
-                // пасть: тёмно-красный провал спереди, губа и верхний ряд зубов
                 BuildMouth(b);
             });
         }
 
         static void BuildMouth(MeshBatch b)
         {
-            Color32 gum = C(94, 18, 32);
-            Color32 deep = C(26, 4, 10);
-            Color32 lip = C(64, 26, 62);
-            Color32 tooth = C(230, 224, 202);
-            float cy = 1.62f;
-            float cz = 1.98f;   // передняя кромка пасти: чуть впереди поверхности туши (на этой высоте она на z ~ 1.85)
-            // глотка — отдельный светящийся меш (EaterThroat), здесь только губа и зубы
-            // губа: кольцо брусков по кромке
-            int seg = 16;
+            Color32 gum = C(104, 18, 34);
+            Color32 lip = C(70, 28, 62);
+            float cy = MouthCy;
+            float cz = MouthCz;
+            // губа: неровное кольцо брусков по контуру, часть бледные струпья
+            int seg = 28;
             for (int j = 0; j < seg; j++)
             {
                 float a = (j + 0.5f) * 6.2831853f / seg;
-                Vector3 m = new Vector3(Mathf.Cos(a) * 1.30f, cy + Mathf.Sin(a) * 0.72f, cz + 0.02f);
-                b.Box(m, new Vector3(0.34f, 0.22f, 0.20f), Mul(lip, 0.9f + 0.2f * Rnd(j, 2, 121)));
+                Vector2 p = MouthPoint(a, 1.04f);
+                Color32 c = Mul(lip, 0.78f + 0.44f * Rnd(j, 4, 123));
+                if (Rnd(j, 5, 124) > 0.82f) c = Mix(c, C(128, 112, 124), 0.4f);
+                b.Box(new Vector3(p.x, cy + p.y, cz + 0.02f + 0.05f * Rnd(j, 6, 125)),
+                    new Vector3(0.24f + 0.16f * Rnd(j, 2, 121), 0.17f + 0.10f * Rnd(j, 3, 122), 0.20f), c);
             }
-            // верхние зубы: клыки вниз по верхней дуге
-            for (int k = 0; k < 13; k++)
-            {
-                float u = (k + 0.5f) / 13f;
-                float a = Mathf.Lerp(0.18f, Mathf.PI - 0.18f, u);
-                Vector3 from = new Vector3(Mathf.Cos(a) * 1.22f, cy + Mathf.Sin(a) * 0.66f, cz + 0.06f);
-                float len = 0.30f + 0.28f * Mathf.Abs(Mathf.Sin(u * 9f + 1f)) + (k % 4 == 0 ? 0.15f : 0f);
-                Spike(b, from, new Vector3(0f, -1f, 0.15f), 0.075f, len, 5, tooth);
-            }
-            // второй ряд: мелкие зубы по краю глотки остриями внутрь, как у миноги (сверху их нет: там висят клыки). Языка у Пожирателя нет —
-            // пасть выглядит глубже за счёт этого ряда и красного провала
+            // дёсны под верхними зубами
             for (int k = 0; k < 18; k++)
             {
-                float a = (k + 0.5f) * 6.2831853f / 18f;
-                float ca = Mathf.Cos(a);
-                float sa = Mathf.Sin(a);
-                if (sa > 0.40f) continue;
-                Vector3 from = new Vector3(ca * 0.98f, cy + sa * 0.50f, cz + 0.05f);
-                Vector3 inward = new Vector3(-ca * 0.85f, -sa * 0.85f, 0.38f);
-                Spike(b, from, inward, 0.055f, 0.20f + 0.09f * Rnd(k, 4, 141), 5, Mul(tooth, 0.86f));
+                float a = Mathf.Lerp(0.10f, Mathf.PI - 0.10f, (k + 0.5f) / 18f);
+                Vector2 p = MouthPoint(a, 0.97f);
+                b.Box(new Vector3(p.x, cy + p.y - 0.04f, cz + 0.05f), new Vector3(0.20f, 0.10f, 0.12f), Mul(gum, 0.85f + 0.30f * Rnd(k, 7, 126)));
+            }
+            // верхние зубы: два десятка клыков разной длины, каждый шестой длинный; загнуты к центру пасти
+            for (int k = 0; k < 24; k++)
+            {
+                float a = Mathf.Lerp(0.10f, Mathf.PI - 0.10f, (k + 0.5f) / 24f);
+                Vector2 p = MouthPoint(a, 0.95f);
+                bool fang = k % 6 == 2;
+                float len = 0.22f + 0.28f * Rnd(k, 8, 127) + (fang ? 0.42f : 0f);
+                float r0 = 0.050f + 0.022f * Rnd(k, 9, 128) + (fang ? 0.03f : 0f);
+                Tooth(b, new Vector3(p.x, cy + p.y, cz + 0.07f), new Vector3(-p.x * 0.04f, -1f, 0.16f), new Vector3(-Mathf.Sign(p.x) * 0.1f, 0.25f, 0.55f), r0, len, k);
+            }
+            // внутренние ряды: мелкие зубы по краю глотки остриями в центр (как у миноги), глубже ещё меньше; сверху их нет, там висят клыки
+            for (int ring = 0; ring < 2; ring++)
+            {
+                int n = ring == 0 ? 22 : 14;
+                float k0 = ring == 0 ? 0.70f : 0.42f;
+                for (int k = 0; k < n; k++)
+                {
+                    float a = (k + 0.5f) * 6.2831853f / n + ring * 0.2f;
+                    if (Mathf.Sin(a) > 0.45f) continue;
+                    Vector2 p = MouthPoint(a, k0);
+                    Vector3 from = new Vector3(p.x, cy + p.y, cz + 0.05f + 0.05f * ring);
+                    float len = (0.22f + 0.10f * Rnd(k, 10 + ring, 129)) * (ring == 0 ? 1f : 0.75f);
+                    Tooth(b, from, new Vector3(-p.x, -p.y * 1.4f, 0.55f + 0.1f * ring), new Vector3(0f, 0f, 0.5f), 0.045f - 0.012f * ring, len, 40 * ring + k);
+                }
             }
         }
 
         /// <summary>
-        /// Глотка Пожирателя: два плоских эллипсоида в провале пасти, внутри красный, глубже почти чёрный. Светится слабо (материал без
-        /// освещения): в темноте пасть видна как тлеющий провал за зубами, а не как дыра.
+        /// Глотка Пожирателя: стопка дисков по контуру пасти от красного края к чёрному центру, светлее и темнее по очереди (рёбра пищевода).
+        /// Светится слабо (материал без освещения, цвет множится на цвет вершин): в темноте пасть видна как тлеющая бездна за зубами.
         /// </summary>
         public static Mesh EaterThroat()
         {
             return Get("EaterThroat", delegate(MeshBatch b)
             {
-                float cy = 1.62f;
-                float cz = 1.98f;
-                Ball(b, new Vector3(0f, cy, cz - 0.04f), new Vector3(1.20f, 0.68f, 0.16f), 16, 4, C(255, 255, 255), null);
-                Ball(b, new Vector3(0f, cy - 0.02f, cz + 0.05f), new Vector3(0.92f, 0.46f, 0.12f), 14, 4, C(150, 120, 120), null);
+                float[] scale = { 1.00f, 0.84f, 0.68f, 0.52f, 0.37f, 0.23f, 0.11f };
+                int[] shade = { 235, 110, 170, 75, 120, 40, 15 };
+                int n = 32;
+                for (int i = 0; i < scale.Length; i++)
+                {
+                    Color32 col = C(shade[i], shade[i], shade[i]);
+                    float z = MouthCz - 0.05f + 0.022f * i;
+                    Vector3 c = new Vector3(0f, MouthCy, z);
+                    for (int j = 0; j < n; j++)
+                    {
+                        Vector2 p0 = MouthPoint(j * 6.2831853f / n, scale[i] * 0.99f);
+                        Vector2 p1 = MouthPoint((j + 1) * 6.2831853f / n, scale[i] * 0.99f);
+                        Vector3 v0 = new Vector3(p0.x, MouthCy + p0.y, z);
+                        Vector3 v1 = new Vector3(p1.x, MouthCy + p1.y, z);
+                        b.Tri(c, v0, v1, col);   // лицом вперёд
+                        b.Tri(c, v1, v0, col);   // и назад: диск видно и сбоку
+                    }
+                }
             });
         }
 
-        /// <summary>Нижняя челюсть: дуга по нижнему краю пасти с зубами вверх; начало — в шарнире у задней кромки пасти.</summary>
+        /// <summary>Нижняя челюсть: дуга по нижнему краю пасти с рядом зубов вверх (два длинных клыка); начало — в шарнире у задней кромки пасти.</summary>
         public static Mesh EaterJaw()
         {
             return Get("EaterJaw", delegate(MeshBatch b)
             {
-                Color32 lip = C(64, 26, 62);
-                Color32 tooth = C(222, 216, 194);
-                Color32 gum = C(94, 18, 32);
+                Color32 lip = C(70, 28, 62);
+                Color32 gum = C(104, 18, 34);
                 // шарнир в (0, 0, 0); челюсть вперёд вдоль +Z и вниз
-                int seg = 11;
+                int seg = 14;
                 for (int k = 0; k < seg; k++)
                 {
-                    float u0 = k / (float)seg;
-                    float u1 = (k + 1) / (float)seg;
-                    float a0 = Mathf.Lerp(Mathf.PI, 0f, u0);
-                    float a1 = Mathf.Lerp(Mathf.PI, 0f, u1);
-                    Vector3 p0 = new Vector3(Mathf.Cos(a0) * 1.22f, -Mathf.Sin(a0) * 0.62f - 0.02f, 0.92f);
-                    Vector3 p1 = new Vector3(Mathf.Cos(a1) * 1.22f, -Mathf.Sin(a1) * 0.62f - 0.02f, 0.92f);
+                    float a0 = Mathf.Lerp(Mathf.PI, 2f * Mathf.PI, k / (float)seg);
+                    float a1 = Mathf.Lerp(Mathf.PI, 2f * Mathf.PI, (k + 1) / (float)seg);
+                    Vector2 m0 = MouthPoint(a0, 1.0f);
+                    Vector2 m1 = MouthPoint(a1, 1.0f);
+                    Vector3 p0 = new Vector3(m0.x, m0.y - 0.02f, 0.92f);
+                    Vector3 p1 = new Vector3(m1.x, m1.y - 0.02f, 0.92f);
                     Vector3 q0 = new Vector3(p0.x * 0.8f, p0.y - 0.30f, 0.30f);
                     Vector3 q1 = new Vector3(p1.x * 0.8f, p1.y - 0.30f, 0.30f);
                     b.Quad(p0, q0, q1, p1, Mix(gum, lip, 0.3f));
                     b.Quad(p1, q1, q0, p0, lip);
-                    b.Box((p0 + p1) * 0.5f + new Vector3(0f, -0.06f, 0.04f), new Vector3(0.34f, 0.18f, 0.20f), Mul(lip, 0.9f + 0.2f * Rnd(k, 3, 131)));
+                    b.Box((p0 + p1) * 0.5f + new Vector3(0f, -0.06f, 0.04f), new Vector3(0.26f + 0.10f * Rnd(k, 3, 131), 0.18f, 0.20f), Mul(lip, 0.85f + 0.30f * Rnd(k, 4, 132)));
                 }
-                for (int k = 0; k < 11; k++)
+                for (int k = 0; k < 18; k++)
                 {
-                    float u = (k + 0.5f) / 11f;
-                    float a = Mathf.Lerp(Mathf.PI - 0.22f, 0.22f, u);
-                    Vector3 from = new Vector3(Mathf.Cos(a) * 1.14f, -Mathf.Sin(a) * 0.58f, 0.93f);
-                    float len = 0.24f + 0.24f * Mathf.Abs(Mathf.Sin(u * 7f + 2f)) + (k % 3 == 0 ? 0.12f : 0f);
-                    Spike(b, from, new Vector3(0f, 1f, -0.05f), 0.07f, len, 5, tooth);
+                    float a = Mathf.Lerp(Mathf.PI + 0.12f, 2f * Mathf.PI - 0.12f, (k + 0.5f) / 18f);
+                    Vector2 p = MouthPoint(a, 0.95f);
+                    bool fang = k == 4 || k == 13;
+                    float len = 0.20f + 0.24f * Rnd(k, 11, 133) + (fang ? 0.40f : 0f);
+                    float r0 = 0.048f + 0.020f * Rnd(k, 12, 134) + (fang ? 0.03f : 0f);
+                    Tooth(b, new Vector3(p.x, p.y, 0.93f), new Vector3(-p.x * 0.05f, 1f, -0.08f), new Vector3(-Mathf.Sign(p.x) * 0.1f, -0.05f, 0.6f), r0, len, 100 + k);
                 }
             });
         }
 
-        /// <summary>Звено щупальца (от основания вдоль -Y... вдоль +Z): конус с присосками-бугорками; thickness — множитель толщины.</summary>
+        /// <summary>Жвало у угла пасти (side: -1 левое, +1 правое): толстый изогнутый рог вперёд и внутрь с шипами по внутренней кромке; начало — в шарнире.</summary>
+        public static Mesh EaterMandible(int side)
+        {
+            return Get("EaterMandible" + side, delegate(MeshBatch b)
+            {
+                // бледная пожелтевшая кость: тёмные жвала сливались с тушей и не читались
+                Color32 chitin = C(168, 150, 124);
+                // клыки-жвала загибаются вперёд, вниз и внутрь, как у кабана: спереди это бивни по бокам пасти, а не планка поперёк лица
+                Vector3[] pts = Horn(b, Vector3.zero, new Vector3(side * 0.30f, -0.12f, 1f), new Vector3(-side * 0.85f, -0.60f, 0.15f), 0.22f, 1.35f, 5, chitin);
+                for (int k = 1; k < pts.Length - 1; k++)
+                    Spike(b, pts[k], new Vector3(-side * 1f, -0.12f, 0.45f), 0.05f, 0.24f + 0.05f * k, 5, Bone);
+                Spike(b, pts[1], new Vector3(side * 1f, 0.4f, 0.2f), 0.06f, 0.26f, 5, BoneDark);
+                Spike(b, pts[2], new Vector3(side * 1f, 0.5f, 0.1f), 0.05f, 0.22f, 5, BoneDark);
+            });
+        }
+
+        /// <summary>Слюна: три тонкие нити с каплей на конце, свисают с верхней челюсти (начало — у кромки пасти).</summary>
+        public static Mesh EaterDrool()
+        {
+            return Get("EaterDrool", delegate(MeshBatch b)
+            {
+                Color32 wet = C(196, 206, 192);
+                float[] xs = { -0.62f, 0.18f, 0.85f };
+                float[] ls = { 0.50f, 0.72f, 0.40f };
+                for (int k = 0; k < xs.Length; k++)
+                {
+                    Vector3 top = new Vector3(xs[k], 0f, 0f);
+                    Vector3 end = top + new Vector3(0.02f * (k - 1), -ls[k], 0.03f);
+                    b.Rod(top, end, 0.011f, 4, wet);
+                    Ball(b, end + new Vector3(0f, -0.03f, 0f), new Vector3(0.028f, 0.040f, 0.028f), 5, 3, Mul(wet, 1.1f), null);
+                }
+            });
+        }
+
+        /// <summary>Звено щупальца (от основания вдоль +Z): конус с присосками снизу, шипами-зацепами сверху и по бокам; на конце коготь.</summary>
         public static Mesh EaterTentacle(int link)
         {
             return Get("EaterTentacle" + link, delegate(MeshBatch b)
@@ -543,24 +706,100 @@ namespace PokaGoryu
                     float r = Mathf.Lerp(r0[link], r1[link], u);
                     b.Box(new Vector3(0f, -r * 0.95f, ln[link] * u), new Vector3(r * 0.9f, r * 0.34f, 0.16f), C(120, 74, 112));
                 }
+                // шипы-зацепы: острия назад, чтобы щупальце цеплялось за добычу
+                for (int k = 0; k < 2; k++)
+                {
+                    float u = 0.28f + 0.38f * k;
+                    float r = Mathf.Lerp(r0[link], r1[link], u);
+                    float z = ln[link] * u;
+                    float sl = 0.13f + 0.03f * (3 - link);
+                    Spike(b, new Vector3(0f, r * 0.85f, z), new Vector3(0f, 0.9f, -0.55f), 0.034f + 0.006f * (3 - link), sl, 4, Bone);
+                    if (link < 3)
+                    {
+                        Spike(b, new Vector3(r * 0.85f, 0f, z), new Vector3(0.9f, 0.1f, -0.5f), 0.030f, sl * 0.8f, 4, BoneDark);
+                        Spike(b, new Vector3(-r * 0.85f, 0f, z), new Vector3(-0.9f, 0.1f, -0.5f), 0.030f, sl * 0.8f, 4, BoneDark);
+                    }
+                }
+                if (link == 3) Horn(b, new Vector3(0f, 0f, ln[3]), new Vector3(0f, 0.1f, 1f), new Vector3(0f, -1.2f, 0f), 0.05f, 0.34f, 3, Bone);
             });
         }
 
-        /// <summary>Большой глаз Пожирателя: бледный шар (светится) со щелевым зрачком — отдельная пластина, чуть впереди шара.</summary>
-        public static Mesh EaterEye(bool pupil)
+        static Vector3 EyeSurf(float x, float y)
         {
-            return Get(pupil ? "EaterPupil" : "EaterEye", delegate(MeshBatch b)
+            float t = 1f - (x / 0.27f) * (x / 0.27f) - (y / 0.30f) * (y / 0.30f);
+            return new Vector3(x, y, 0.20f * Mathf.Sqrt(Mathf.Max(0f, t)) + 0.012f);
+        }
+
+        /// <summary>Глазное яблоко Пожирателя: бледный шар (светится, материал без освещения) с красными прожилками к краям.</summary>
+        public static Mesh EaterEye()
+        {
+            return Get("EaterEyeball", delegate(MeshBatch b)
             {
-                if (!pupil)
+                Ball(b, Vector3.zero, new Vector3(0.27f, 0.30f, 0.20f), 12, 7, C(255, 255, 255), null);
+                Color32 red = C(235, 70, 50);
+                for (int k = 0; k < 10; k++)
                 {
-                    Ball(b, Vector3.zero, new Vector3(0.27f, 0.30f, 0.20f), 10, 6, C(255, 255, 255), null);
+                    float side = k < 5 ? -1f : 1f;
+                    float y0 = (k % 5 - 2) * 0.10f;
+                    Vector3 p0 = EyeSurf(side * 0.255f, y0);
+                    Vector3 p1 = EyeSurf(side * (0.12f + 0.03f * Rnd(k, 1, 141)), y0 * 0.4f + 0.02f * (k % 3 - 1));
+                    Vector3 w = new Vector3(0f, 0.010f, 0f);
+                    b.Quad(p0 - w, p1 - w, p1 + w, p0 + w, red);
+                    b.Quad(p0 + w, p1 + w, p1 - w, p0 - w, red);
                 }
-                else
+            });
+        }
+
+        /// <summary>Радужка и зрачок (двигаются по глазу вслед за героем): янтарный восьмиугольник и узкая щель-ромб; плоские, двусторонние.</summary>
+        public static Mesh EaterGaze()
+        {
+            return Get("EaterGaze", delegate(MeshBatch b)
+            {
+                Color32 iris = C(232, 150, 34);
+                Color32 pupil = C(6, 2, 1);
+                Vector3 c = new Vector3(0f, 0f, 0.207f);
+                int n = 8;
+                for (int i = 0; i < n; i++)
                 {
-                    // вертикальная щель на передней поверхности шара
-                    Vector3 c = new Vector3(0f, 0f, 0.205f);
-                    b.Quad(c + new Vector3(-0.028f, -0.16f, 0f), c + new Vector3(0.028f, -0.16f, 0f), c + new Vector3(0.028f, 0.16f, 0f), c + new Vector3(-0.028f, 0.16f, 0f), C(18, 8, 4));
-                    b.Quad(c + new Vector3(-0.028f, 0.16f, 0f), c + new Vector3(0.028f, 0.16f, 0f), c + new Vector3(0.028f, -0.16f, 0f), c + new Vector3(-0.028f, -0.16f, 0f), C(18, 8, 4));
+                    Vector3 v0 = c + new Vector3(Mathf.Cos(i * 6.2831853f / n) * 0.155f, Mathf.Sin(i * 6.2831853f / n) * 0.17f, 0f);
+                    Vector3 v1 = c + new Vector3(Mathf.Cos((i + 1) * 6.2831853f / n) * 0.155f, Mathf.Sin((i + 1) * 6.2831853f / n) * 0.17f, 0f);
+                    b.Tri(c, v0, v1, iris);
+                    b.Tri(c, v1, v0, iris);
+                }
+                Vector3 pc = c + new Vector3(0f, 0f, 0.006f);
+                Vector3 top = pc + new Vector3(0f, 0.15f, 0f);
+                Vector3 bot = pc + new Vector3(0f, -0.15f, 0f);
+                Vector3 l = pc + new Vector3(-0.036f, 0f, 0f);
+                Vector3 r = pc + new Vector3(0.036f, 0f, 0f);
+                b.Tri(top, l, r, pupil);
+                b.Tri(top, r, l, pupil);
+                b.Tri(bot, r, l, pupil);
+                b.Tri(bot, l, r, pupil);
+            });
+        }
+
+        /// <summary>
+        /// Глазница, веко и бровь (side: -1 левый глаз, +1 правый): тёмная скошенная плита нависает над глазом злым углом (внутренний край ниже
+        /// наружного), по верхней кромке костяные шипы. Веко — отдельная деталь: опускается при моргании и в нападении.
+        /// </summary>
+        public static Mesh EaterLid(int side)
+        {
+            return Get("EaterLid" + side, delegate(MeshBatch b)
+            {
+                Color32 skin = Mul(FleshDark, 1.05f);
+                Color32 rim = Mul(FleshLight, 1.2f);
+                Ball(b, new Vector3(0f, 0f, -0.04f), new Vector3(0.42f, 0.42f, 0.13f), 12, 5, Mul(FleshDark, 0.8f), null);
+                Vector2[] poly =
+                {
+                    new Vector2(side * 0.44f, 0.20f), new Vector2(-side * 0.40f, -0.04f),
+                    new Vector2(-side * 0.42f, 0.50f), new Vector2(side * 0.50f, 0.66f)
+                };
+                Slab(b, Vector3.zero, poly, 0.02f, 0.27f, rim, skin);
+                for (int k = 0; k < 4; k++)
+                {
+                    float u = 0.15f + 0.23f * k;
+                    Vector3 at = new Vector3(Mathf.Lerp(-side * 0.40f, side * 0.48f, u), Mathf.Lerp(0.52f, 0.64f, u), 0.16f);
+                    Spike(b, at, new Vector3(side * 0.25f, 1f, 0.25f), 0.045f, 0.16f + 0.05f * Rnd(k, side + 3, 171), 5, Bone);
                 }
             });
         }

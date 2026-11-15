@@ -146,6 +146,7 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "mugview_intro") StepMugView(gm, false);
                 else if (scenario == "mugview_ending") StepMugView(gm, true);
                 else if (scenario == "windowview") StepWindowView(gm);
+                else if (scenario == "jamshots") StepJamShots(gm);
                 else if (scenario == "armrig_intro") StepArmRig(gm, false);
                 else if (scenario == "armrig_ending") StepArmRig(gm, true);
                 else if (scenario == "armscan_intro") StepArmScan(gm, false);
@@ -1327,6 +1328,21 @@ namespace PokaGoryu.EditorTools
             }
             // вторая часть: поза нападения (Тень тянет руки, Гаситель раскручивается, Пожиратель жуёт), укус и гибель
             int t1 = t0 + 20 + 12 * 12 + 10;
+            // Пожиратель с шести метров: три четверти слева, сбоку и сзади (рога, рёбра, жвала, шипы на щупальцах)
+            if (frame == 230 || frame == 234 || frame == 238)
+            {
+                Enemy e = monsterList[2];
+                if (e != null)
+                {
+                    float d = 6.5f;
+                    Vector3 target = e.transform.position + new Vector3(0f, 2.6f, 0f);
+                    Vector3 off = frame == 230 ? new Vector3(-0.55f * d, 0.20f * d, 0.80f * d) : frame == 234 ? new Vector3(0.95f * d, 0.15f * d, 0.20f * d) : new Vector3(-0.80f * d, 0.30f * d, -0.60f * d);
+                    Vector3 eye = target + e.transform.rotation * off;
+                    monsterLight.Pos = eye + new Vector3(0f, 0.8f, 0f) + (target - eye).normalized * 0.5f;
+                    monsterLight.Intensity = 0.42f;
+                    CaptureAt(gm, frame == 230 ? "w6_eater_34left" : frame == 234 ? "w7_eater_side" : "w8_eater_back34", eye, target);
+                }
+            }
             // пасть Пожирателя вплотную (в покое и широко открытая): видно зубы, глотку и что торчащего изо рта нет
             if (frame == t1 - 6 || frame == t1 + 18)
             {
@@ -1382,6 +1398,163 @@ namespace PokaGoryu.EditorTools
                 report.AppendLine("after death: enemies listed=" + Enemy.All.Count + ", dead shade object " + (monsterList[0] == null ? "destroyed" : "still there"));
                 Finish("OK", errors > 0 ? 2 : 0);
             }
+        }
+
+        /// <summary>Развернуть врага лицом к точке (его собственный поворот меняется только на ходу и в нападении, а стоящий оглушённый смотрит куда смотрел).</summary>
+        static void FaceHero(Enemy e, Vector3 heroPos)
+        {
+            if (e == null) return;
+            Vector3 d = heroPos - e.transform.position;
+            d.y = 0f;
+            if (d.sqrMagnitude < 0.01f) return;
+            float yawDeg = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+            FieldInfo fi = typeof(Enemy).GetField("yaw", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (fi != null) fi.SetValue(e, yawDeg);
+            e.transform.rotation = Quaternion.Euler(0f, yawDeg, 0f);
+        }
+
+        /// <summary>Точка на проходимой земле в dist м от цели с чистой линией до неё: перебор углов от yaw (yaw обновляется).</summary>
+        static Vector3 ClearViewPos(Vector3 tgt, float dist, ref float yaw)
+        {
+            for (int k = 0; k < 24; k++)
+            {
+                float off = ((k + 1) / 2) * 15f * (k % 2 == 0 ? 1f : -1f);
+                float y2 = yaw + off;
+                float a2 = y2 * Mathf.Deg2Rad;
+                Vector3 p2 = tgt - new Vector3(Mathf.Sin(a2), 0f, Mathf.Cos(a2)) * dist;
+                p2.y = 0.1f;
+                Vector3 e = Vector3.Lerp(p2, tgt, 0.85f);
+                if (CityMap.CanStand(p2.x, p2.z, 0.4f, true) && CityMap.LineClear(p2.x, p2.z, e.x, e.z, 0.2f, true)) { yaw = y2; return p2; }
+            }
+            float a = yaw * Mathf.Deg2Rad;
+            Vector3 p = tgt - new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * dist;
+            p.y = 0.1f;
+            return p;
+        }
+
+        static Vector3 jamSpot;
+
+        /// <summary>
+        /// Без окна: кадры для страницы игры (1280x720, глазами героя): луч по Тени, Гаситель, Пожиратель впереди, очаг и лампы, трое спутников
+        /// идут за героем. Кадры j2_beam_a/b, j3_snuffer, j4_eater_a/b, j5_hearth, j6_lamp_a/b, j1_people_a/b.
+        /// </summary>
+        static void StepJamShots(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            if (frame == 3) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
+            if (frame < 5) return;
+            gm.Hero.Life = 100f;
+            int f = frame - 5;
+            Vector3 heroPos = pc.transform.position;
+            for (int i = 0; i < Enemy.All.Count; i++)
+            {
+                Enemy e = Enemy.All[i];
+                if (e == null) continue;
+                e.Stun(5f);
+                e.Health = 9999f;
+                FaceHero(e, heroPos);
+            }
+            if (monsterLight != null) monsterLight.Pos = pc.Cam.transform.position + new Vector3(0f, 0.6f, 0f);
+            Vector3 spot = jamSpot;
+            if (f == 0)
+            {
+                spot = FindOpenSpot(14f);
+                if (spot.x == 171f && spot.z == 225f) spot = FindOpenSpot(9f);
+                jamSpot = spot;
+                report.AppendLine("jam spot " + spot.ToString("F1"));
+                monsterLight = new EndingLight { Radius = 9f, Intensity = 0.24f, Col = new Color(1f, 0.86f, 0.66f, 1f) };
+                LightField.Register(monsterLight);
+            }
+
+            // B: луч по Тени
+            if (f == 0)
+            {
+                pc.TeleportTo(spot + new Vector3(0f, 0.1f, -7f), 0f);
+                SetPitch(pc, 2f);
+                Enemy shade = Enemy.Spawn(EnemyKind.Shade, spot + new Vector3(0.3f, 0f, -2.3f));
+                shade.DebugAttack = true;
+                Enemy shade2 = Enemy.Spawn(EnemyKind.Shade, spot + new Vector3(-3.6f, 0f, 0.8f));
+                shade2.DebugAttack = true;
+            }
+            if (f == 70) { pc.Combat.ForceHold = true; pc.Combat.FireShot(); }
+            if (f == 84) Capture("j2_beam_a");
+            if (f == 100) Capture("j2_beam_b");
+            if (f == 102) pc.Combat.ForceHold = false;
+
+            // C: Гаситель
+            if (f == 110)
+            {
+                Enemy.ClearAll();
+                SetPitch(pc, -4f);
+                Enemy sn = Enemy.Spawn(EnemyKind.Snuffer, spot + new Vector3(0.3f, 0f, -3.3f));
+                sn.DebugAttack = true;
+            }
+            if (f == 185) Capture("j3_snuffer");
+
+            // D: Пожиратель
+            if (f == 190)
+            {
+                Enemy.ClearAll();
+                SetPitch(pc, -6f);
+                Enemy eater = Enemy.Spawn(EnemyKind.Eater, spot + new Vector3(0f, 0f, 2.5f));
+                eater.DebugAttack = true;
+            }
+            if (f == 265) Capture("j4_eater_a");
+            if (f == 266) { pc.TeleportTo(spot + new Vector3(0f, 0.1f, -2.8f), 0f); SetPitch(pc, -10f); }
+            if (f == 290) Capture("j4_eater_b");
+
+            // E: очаг и лампы (в тёплом свете; потухшие лампы раздуваем)
+            if (f == 295)
+            {
+                Enemy.ClearAll();
+                Lamp hearth = null;
+                for (int i = 0; i < Lamp.All.Count && hearth == null; i++) if (Lamp.All[i] != null && Lamp.All[i].IsHearth) hearth = Lamp.All[i];
+                if (hearth != null)
+                {
+                    float yaw = 200f;
+                    Vector3 p = ClearViewPos(hearth.BasePos, 5.5f, ref yaw);
+                    pc.TeleportTo(p, yaw);
+                    SetPitch(pc, -8f);
+                    report.AppendLine("hearth at " + hearth.BasePos.ToString("F1") + ", viewed from " + p.ToString("F1"));
+                }
+                else report.AppendLine("no hearth found");
+            }
+            if (f == 330) Capture("j5_hearth");
+            int[] lampIdx = { 10, 40 };
+            for (int k = 0; k < lampIdx.Length; k++)
+            {
+                int at = 335 + k * 45;
+                if (f == at && Lamp.All.Count > 0)
+                {
+                    Lamp l = Lamp.All[Mathf.Min(lampIdx[k], Lamp.All.Count - 1)];
+                    if (l.Dead) l.Feed(60f);
+                    float yaw = 20f + 70f * k;
+                    Vector3 p = ClearViewPos(l.BasePos, 5.5f, ref yaw);
+                    pc.TeleportTo(p, yaw);
+                    SetPitch(pc, -10f);
+                    report.AppendLine("lamp " + lampIdx[k] + " at " + l.BasePos.ToString("F1") + " hearth=" + l.IsHearth + " dead=" + l.Dead + ", viewed from " + p.ToString("F1"));
+                }
+                if (f == at + 30) Capture("j6_lamp_" + (k == 0 ? "a" : "b"));
+            }
+
+            // A: трое спутников проснулись и идут за героем (он смотрит на них)
+            if (f == 430)
+            {
+                Vector3 hero = spot + new Vector3(0f, 0.1f, 2f);
+                pc.TeleportTo(hero, 180f);
+                SetPitch(pc, 3f);
+                monsterLight.Intensity = 0.05f;   // у людей и так свой свет: сильная подсветка выжигает лица в белое
+                Vector3[] at = { new Vector3(-1.9f, 0f, -3.6f), new Vector3(1.7f, 0f, -4.4f), new Vector3(0.1f, 0f, -6.0f) };
+                for (int k = 0; k < 3 && k < Survivor.All.Count; k++)
+                {
+                    Survivor s = Survivor.All[k];
+                    s.Relocate(hero + at[k]);
+                    s.Wake();
+                }
+            }
+            if (f == 505) Capture("j1_people_a");
+            if (f == 540) Capture("j1_people_b");
+            if (f == 545) Finish("OK", errors > 0 ? 2 : 0);
         }
 
         /// <summary>Снимок с произвольной точки (пространство тела героя): камера игрока на кадр переставляется и возвращается обратно.</summary>

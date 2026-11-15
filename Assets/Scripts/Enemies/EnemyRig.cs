@@ -305,23 +305,35 @@ namespace PokaGoryu
     // ====================================================================== Пожиратель
 
     /// <summary>
-    /// Пожиратель: огромная бугристая туша на щупальцах. Пасть с тремя рядами зубов, без языка (нижняя челюсть ходит: жуёт, а при укусе
-    /// захлопывается), две пары больших бледных глаз со щелевым зрачком и россыпь мелких, шесть щупалец из четырёх звеньев с бегущей волной,
-    /// дыхание и тяжёлая качка при ходьбе.
+    /// Пожиратель: огромная бугристая туша на щупальцах. Пасть с тремя рядами зубов (нижняя челюсть жуёт, при укусе захлопывается) и двумя
+    /// жвалами у углов, которые раздвигаются при нападении; из пасти свисает слюна. Две пары глаз: два больших с узким зрачком под тяжёлыми
+    /// злыми веками (зрачки следят за героем, глаза моргают и подёргиваются) и россыпь мелких красных. Шесть щупалец из четырёх звеньев
+    /// с зацепами и когтем, бегущая волна, дыхание, тяжёлая качка при ходьбе и редкая судорога.
     /// </summary>
     sealed class EaterRig : EnemyRig
     {
         const int Tentacles = 6;
         const int Links = 4;
+        const int SmallEyes = 8;
 
         readonly Transform body;
         readonly Transform jaw;
+        readonly Transform drool;
+        readonly Transform[] mand = new Transform[2];
         readonly Transform[,] chain = new Transform[Tentacles, Links];
         readonly Transform[] bigEyes = new Transform[2];
+        readonly Transform[] gaze = new Transform[2];
+        readonly Transform[] lids = new Transform[2];
+        readonly Transform[] smallEyes = new Transform[SmallEyes];
+        readonly float[] smallBase = new float[SmallEyes];
+        readonly float[] bigSize = new float[2];
+        readonly Vector2[] gazePos = new Vector2[2];
         readonly Material eyeMat;
-        readonly Material pupilMat;
+        readonly Material smallEyeMat;
+        readonly Material[] haloMats = new Material[2];
         readonly Material throatMat;
         float open;
+        float attack;
         float phase;
 
         public EaterRig(Transform parent, float seed) : base(parent, "EaterBody", seed)
@@ -329,30 +341,44 @@ namespace PokaGoryu
             Material lit = Gfx.Lit(Color.white);
             body = Pivot(root, "Body", Vector3.zero);
             Part(body, "Flesh", EnemyModels.EaterBody(), lit, Vector3.zero);
-            throatMat = Glow(new Color(0.42f, 0.05f, 0.09f, 1f), 0.5f);
+            throatMat = Glow(new Color(0.46f, 0.045f, 0.06f, 1f), 0.5f);
             Part(body, "Throat", EnemyModels.EaterThroat(), throatMat, Vector3.zero);
-            jaw = Pivot(body, "Jaw", new Vector3(0f, 1.62f, 1.06f));
+            jaw = Pivot(body, "Jaw", new Vector3(0f, EnemyModels.MouthCy, EnemyModels.MouthCz - 0.92f));
             Part(jaw, "JawMesh", EnemyModels.EaterJaw(), lit, Vector3.zero);
-            eyeMat = Glow(new Color(0.95f, 0.93f, 0.62f, 1f), 0.45f);
-            pupilMat = Glow(new Color(0.07f, 0.03f, 0.02f, 1f), 0.45f);
+            drool = Pivot(body, "Drool", new Vector3(0f, EnemyModels.MouthCy + 0.50f, EnemyModels.MouthCz + 0.16f));
+            Part(drool, "DroolMesh", EnemyModels.EaterDrool(), lit, Vector3.zero);
+            for (int k = 0; k < 2; k++)
+            {
+                int side = k == 0 ? -1 : 1;
+                mand[k] = Pivot(body, "Mandible" + k, new Vector3(side * (EnemyModels.MouthW + 0.03f), EnemyModels.MouthCy, EnemyModels.MouthCz - 0.06f));
+                Part(mand[k], "MandibleMesh", EnemyModels.EaterMandible(side), lit, Vector3.zero);
+            }
+            eyeMat = Glow(new Color(1f, 0.93f, 0.50f, 1f), 0.45f);
+            smallEyeMat = Glow(new Color(1f, 0.30f, 0.14f, 1f), 0.45f);
             Vector3[] eyeAt = { new Vector3(-0.80f, 3.20f, 1.60f), new Vector3(0.80f, 3.20f, 1.60f) };
             for (int k = 0; k < 2; k++)
             {
-                bigEyes[k] = Part(body, "Eye" + k, EnemyModels.EaterEye(false), eyeMat, eyeAt[k]);
-                Part(bigEyes[k], "Pupil", EnemyModels.EaterEye(true), pupilMat, Vector3.zero);
+                bigEyes[k] = Part(body, "Eye" + k, EnemyModels.EaterEye(), eyeMat, eyeAt[k]);
+                bigEyes[k].localRotation = Quaternion.Euler(0f, 0f, k == 0 ? -5f : 7f);   // глаза не симметричны: один чуть повёрнут, другой меньше
+                bigSize[k] = k == 0 ? 1f : 0.88f;
+                gaze[k] = Part(bigEyes[k], "Gaze", EnemyModels.EaterGaze(), eyeMat, Vector3.zero);
+                lids[k] = Part(bigEyes[k], "Lid", EnemyModels.EaterLid(k == 0 ? -1 : 1), lit, Vector3.zero);
+                haloMats[k] = Halo(new Color(1f, 0.78f, 0.30f, 0.35f), 0.45f);   // у каждого глаза свой ореол: закрытый глаз не светится
+                Gfx.Sprite(bigEyes[k], new Vector3(0f, 0f, 0.30f), new Vector2(1.5f, 1.5f), haloMats[k], false);
             }
-            // россыпь мелких глаз: на лбу и по бокам, у каждого свой наклон
+            // россыпь мелких красных глаз: на лбу и по бокам, у каждого свой наклон и своё моргание
             Vector3[] smallAt =
             {
                 new Vector3(-1.50f, 2.80f, 1.15f), new Vector3(1.50f, 2.80f, 1.15f), new Vector3(-0.35f, 3.85f, 1.12f), new Vector3(0.42f, 3.78f, 1.14f),
                 new Vector3(-1.85f, 2.20f, 0.65f), new Vector3(1.88f, 2.35f, 0.60f), new Vector3(-1.05f, 3.62f, 1.00f), new Vector3(1.12f, 3.50f, 1.05f)
             };
             float[] smallYaw = { -35f, 35f, -8f, 8f, -62f, 62f, -22f, 20f };
-            for (int k = 0; k < smallAt.Length; k++)
+            for (int k = 0; k < SmallEyes; k++)
             {
-                Transform e = Part(body, "SmallEye" + k, EnemyModels.EaterEye(false), eyeMat, smallAt[k]);
-                e.localScale = Vector3.one * (0.36f + 0.09f * (k % 3));
-                e.localRotation = Quaternion.Euler(0f, smallYaw[k], 0f);
+                smallEyes[k] = Part(body, "SmallEye" + k, EnemyModels.EaterEye(), smallEyeMat, smallAt[k]);
+                smallBase[k] = 0.36f + 0.09f * (k % 3);
+                smallEyes[k].localScale = Vector3.one * smallBase[k];
+                smallEyes[k].localRotation = Quaternion.Euler(0f, smallYaw[k], 0f);
             }
             float[] yaw = { -66f, -26f, 26f, 66f, 148f, -148f };
             for (int i = 0; i < Tentacles; i++)
@@ -382,17 +408,60 @@ namespace PokaGoryu
             float calm = s.Stun > 0f ? 0.3f : 1f;
             float move = Mathf.Clamp01(s.Speed / 1.7f);
             phase += dt * (1.3f + 1.4f * move) * calm;
+            attack = Smooth(attack, s.Attacking ? 1f : 0f, 8f, dt);
             float breath = Mathf.Sin(t * 1.4f);
+            // редкая судорога: короткая дрожь всего тела и расширенные глаза
+            float spasm = Mathf.Pow(Mathf.Max(0f, Mathf.Sin(t * 0.8f + seed * 4f)), 24f) * calm;
             root.localScale = new Vector3(Mathf.Lerp(0.7f, 1f, spawn), Mathf.Lerp(0.3f, 1f, spawn), Mathf.Lerp(0.7f, 1f, spawn)) * (1f + 0.07f * s.Hit);
             root.localPosition = new Vector3(0f, 0.04f * Mathf.Sin(phase * 2f) * (0.3f + move), 0f);
             body.localScale = new Vector3(1f + 0.025f * breath, 1f - 0.03f * breath, 1f + 0.025f * breath);
-            body.localRotation = Quaternion.Euler(2f + 3f * move * Mathf.Sin(phase * 2f), 2f * Mathf.Sin(phase), 2.5f * Mathf.Sin(phase));
+            body.localRotation = Quaternion.Euler(2f + 3f * move * Mathf.Sin(phase * 2f) + 4f * spasm * Mathf.Sin(t * 50f), 2f * Mathf.Sin(phase),
+                2.5f * Mathf.Sin(phase) + 3f * spasm * Mathf.Sin(t * 43f));
 
-            // челюсть: покой — вялая зевота, нападение — жуёт, укус — захлопывается
-            float openTarget = s.Attacking ? 0.55f + 0.45f * Mathf.Sin(t * 5.5f) : 0.18f + 0.14f * Mathf.Sin(t * 0.9f);
+            // челюсть: в покое приоткрыта и вяло зевает, в нападении жуёт, на укусе захлопывается
+            float openTarget = s.Attacking ? 0.62f + 0.38f * Mathf.Sin(t * 5.5f) : 0.28f + 0.16f * Mathf.Sin(t * 0.9f);
             open = Smooth(open, openTarget, 10f, dt);
             float jawOpen = Mathf.Max(0f, open) * (1f - s.Bite);
-            jaw.localRotation = Quaternion.Euler(8f + jawOpen * 34f, 0f, 0f);
+            jaw.localRotation = Quaternion.Euler(8f + jawOpen * 38f, 0f, 0f);
+            drool.localRotation = Quaternion.Euler(5f * Mathf.Sin(t * 1.7f), 0f, 6f * Mathf.Sin(t * 1.3f));
+            drool.localScale = new Vector3(1f, 1f + 0.35f * jawOpen, 1f);
+            // жвала: в покое чуть дышат, в нападении раздвигаются и щёлкают, на укусе смыкаются
+            for (int k = 0; k < 2; k++)
+            {
+                float ang = (5f + 6f * Mathf.Sin(t * 1.3f + k)) * (1f - attack) + (24f + 8f * Mathf.Sin(t * 16f + k * 2f)) * attack;
+                ang *= 1f - 0.9f * s.Bite;
+                mand[k].localRotation = Quaternion.Euler(0f, (k == 0 ? -1f : 1f) * ang, 0f);
+            }
+
+            // глаза: зрачки следят за героем, веки моргают и тяжелеют в нападении
+            Transform cam = null;
+            GameManager gm = GameManager.Instance;
+            if (gm != null && gm.Player != null && gm.Player.Cam != null) cam = gm.Player.Cam.transform;
+            for (int k = 0; k < 2; k++)
+            {
+                Vector2 want = Vector2.zero;
+                if (cam != null)
+                {
+                    Vector3 dn = bigEyes[k].InverseTransformPoint(cam.position).normalized;
+                    want = new Vector2(dn.x, dn.y) * 0.22f;
+                    if (want.magnitude > 0.10f) want = want.normalized * 0.10f;
+                }
+                gazePos[k] = Vector2.Lerp(gazePos[k], want, 1f - Mathf.Exp(-10f * dt));
+                gaze[k].localPosition = new Vector3(gazePos[k].x, gazePos[k].y, 0f);
+                gaze[k].localScale = new Vector3(Mathf.Lerp(1f, 0.6f, attack), Mathf.Lerp(1f, 1.12f, attack), 1f);
+                float cyc = Mathf.Repeat(t * 0.23f + k * 0.04f, 1f);
+                float blink = cyc > 0.95f ? Mathf.Sin((cyc - 0.95f) / 0.05f * Mathf.PI) : 0f;
+                lids[k].localPosition = new Vector3(0f, -0.30f * blink - 0.07f * attack - 0.08f * s.Hit, 0f);
+                bigEyes[k].localScale = Vector3.one * (bigSize[k] * (1f + 0.04f * Mathf.Sin(t * 2.2f + k) + 0.10f * spasm));
+                float haloA = (0.26f + 0.10f * Mathf.Sin(t * 3f) + 0.22f * attack + 0.25f * s.Hit) * spawn * (1f - 0.9f * blink);
+                haloMats[k].SetColor("_Color", new Color(1f, 0.78f, 0.30f, haloA));
+            }
+            for (int k = 0; k < SmallEyes; k++)
+            {
+                float cyc = Mathf.Repeat(t * (0.31f + 0.05f * k) + k * 0.37f, 1f);
+                float blink = cyc > 0.93f ? Mathf.Sin((cyc - 0.93f) / 0.07f * Mathf.PI) : 0f;
+                smallEyes[k].localScale = new Vector3(smallBase[k], smallBase[k] * (1f - 0.9f * blink), smallBase[k]);
+            }
 
             for (int i = 0; i < Tentacles; i++)
             {
@@ -406,11 +475,12 @@ namespace PokaGoryu
                     chain[i, k].localRotation = Quaternion.Euler(basePitch + amp * Mathf.Sin(w) * calm, amp * 0.9f * Mathf.Sin(w * 0.8f + 1.3f) * calm, 0f);
                 }
             }
-            float glare = 0.82f + 0.18f * Mathf.Sin(t * 3f) + 0.5f * s.Hit;
-            eyeMat.SetColor("_Color", new Color(0.95f * glare, 0.93f * glare, 0.62f * glare, 1f));
+            float glare = 0.80f + 0.12f * Mathf.Sin(t * 3f) + 0.5f * s.Hit + 0.25f * attack;   // не выжигать глаз в белое: радужка и зрачок должны читаться
+            eyeMat.SetColor("_Color", new Color(1f * glare, 0.93f * glare, 0.50f * glare, 1f));
+            float flick = 0.85f + 0.25f * Mathf.Sin(t * 7f) + 0.4f * attack;
+            smallEyeMat.SetColor("_Color", new Color(1f * flick, 0.30f * flick, 0.14f * flick, 1f));
             float throat = 0.7f + 0.3f * Mathf.Sin(t * 2.4f) + 0.5f * jawOpen;
-            throatMat.SetColor("_Color", new Color(0.42f * throat, 0.05f * throat, 0.09f * throat, 1f));
-            for (int k = 0; k < 2; k++) bigEyes[k].localScale = Vector3.one * (1f + 0.04f * Mathf.Sin(t * 2.2f + k));
+            throatMat.SetColor("_Color", new Color(0.55f * throat, 0.06f * throat, 0.08f * throat, 1f));
         }
     }
 }

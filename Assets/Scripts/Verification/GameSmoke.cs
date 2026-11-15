@@ -596,7 +596,7 @@ namespace PokaGoryu
                 yield return null; yield return null;
             }
             int foeAfter = Resources.FindObjectsOfTypeAll<Material>().Length;
-            Check(foeParts[0] >= 12 && foeParts[1] >= 10 && foeParts[2] >= 30,
+            Check(foeParts[0] >= 12 && foeParts[1] >= 10 && foeParts[2] >= 40,
                 "enemies are 3D bodies made of parts: shade " + foeParts[0] + ", snuffer " + foeParts[1] + ", eater " + foeParts[2]);
             Check(foeAfter <= foeBefore, "enemy bodies release their own materials: " + foeBefore + " -> " + foeAfter);
 
