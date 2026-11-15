@@ -8,7 +8,7 @@
   3. Leaves the verification source in place for the next run.
   Exit code: 0 when the report says "SMOKE RESULT: OK" and errors=0, otherwise 1.
 
-.PARAMETER Scenario      Harness scenario: layout, enemies, busfight, durable, econ, reson, pizza, follow, views, ... (see README.md).
+.PARAMETER Scenario      Harness scenario: layout, enemies, busfight, finalstand, finalpassive, durable, econ, reson, pizza, follow, views, ... (see README.md).
 .PARAMETER Name          Label of this run; results go to <OutRoot>\shots_<Name> and the log to <OutRoot>\unity_<Name>.log.
 .PARAMETER Views         Path to a views file for -Scenario views (lines: "name kind args", see README.md).
 .PARAMETER Windowed      Do not pass -batchmode (IMGUI screens are only painted in a real editor window: menushot, introshot, thoughts).

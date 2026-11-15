@@ -31,6 +31,7 @@ public static class CoreChecks
         try
         {
             GameConfig.ResetDefaults();
+            Assert(GameConfig.FinalTime == 60f, "the final stand at the bus lasts exactly one minute (the music track is cut to it)");
             CityMap.Build();
             Pt start = CityMap.CenterOf(CityMap.StartX, CityMap.StartZ);
             Pt bus = CityMap.CenterOf(CityMap.BusX, CityMap.BusZ);

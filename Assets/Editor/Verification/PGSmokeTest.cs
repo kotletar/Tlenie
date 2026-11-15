@@ -139,6 +139,8 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "aerialskip") StepAerialSkip(gm);
                 else if (scenario == "follow") StepFollow(gm);
                 else if (scenario == "busfight") StepBusFight(gm);
+                else if (scenario == "finalstand") StepFinalStand(gm, true);
+                else if (scenario == "finalpassive") StepFinalStand(gm, false);
                 else if (scenario == "econ") StepEcon(gm);
                 else if (scenario == "reson") StepReson(gm);
                 else if (scenario == "pizza") StepPizza(gm);
@@ -1172,6 +1174,112 @@ namespace PokaGoryu.EditorTools
                 for (int i = 0; i < Enemy.All.Count; i++) report.AppendLine("  enemy " + i + " at " + Enemy.All[i].transform.position.ToString("F1"));
                 Finish("OK", errors > 0 ? 2 : 0);
             }
+        }
+
+        static int standKills0;
+        static float standMinLife = 999f;
+        static int standMaxEnemies;
+
+        static void SetYaw(PlayerController pc, float deg)
+        {
+            FieldInfo fi = typeof(PlayerController).GetField("yaw", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (fi != null) fi.SetValue(pc, deg);
+        }
+
+        /// <summary>
+        /// Без окна: последняя минута у автобуса целиком (3600 кадров по 1/60 с). Герой стоит в кольце у двери, двигатель заведён.
+        /// «finalstand» — умелый герой: аура на минимуме, бьёт Пожирателей и Теней выстрелами с идеальной меткостью, осколки в радиусе 22 м
+        /// подбирает сразу (потолок мастерства); «finalpassive» — стоит и ничего не делает (низ). Настоящий игрок между ними.
+        /// Отчёт каждые 5 с: свет, враги, осколки; в конце: уехал ли автобус, сколько света, сколько ушло на выстрелы и пришло осколками.
+        /// </summary>
+        static void StepFinalStand(GameManager gm, bool gunner)
+        {
+            PlayerController pc = gm.Player;
+            Bus bus = Bus.Instance;
+            if (frame == 3) gm.State = GameState.Playing;
+            if (frame < 5) return;
+            if (frame == 5)
+            {
+                Enemy.ClearAll();
+                gm.Hero.Life = 100f;
+                Vector3 door = bus.DoorPos;
+                pc.TeleportTo(new Vector3(door.x, 0.1f, door.z), 270f);
+                bus.Feed(GameConfig.BusNeed + 1f);   // двигатель заведён: минута пошла
+                standKills0 = gm.EnemiesKilled;
+                report.AppendLine("final stand (" + (gunner ? "gunner with perfect aim" : "passive hero") + "): length " + bus.StandLength.ToString("F0")
+                    + " s, bus " + bus.State + ", hero " + pc.transform.position.ToString("F1") + ", eater every " + GameConfig.FinalEaterInterval.ToString("F0")
+                    + " s, pressure +" + GameConfig.FinalPressure.ToString("F1") + ", extra shades " + GameConfig.ShadesFinal);
+                return;
+            }
+            float t = (frame - 6) / 60f;
+            if (gm.Hero.Life < standMinLife) standMinLife = gm.Hero.Life;
+            int enemies = Enemy.All.Count;
+            if (enemies > standMaxEnemies) standMaxEnemies = enemies;
+
+            if (gunner && bus.State == Bus.Mode.Running && gm.State == GameState.Playing)
+            {
+                gm.Hero.AuraTarget = GameConfig.AuraMin;   // умелый игрок гасит ауру: она съедает больше всего света
+                // осколки подбирает сразу (на самом деле — шаг-два от круга и вдох на E)
+                Vector3 chest = pc.transform.position + Vector3.up * 1.3f;
+                for (int i = 0; i < LightOrb.All.Count; i++)
+                {
+                    LightOrb o = LightOrb.All[i];
+                    if (o != null && !o.Collected && (o.transform.position - chest).magnitude < 22f) o.Collect();
+                }
+                // цель: Пожиратель (его свет автобуса не жжёт), Тени — только те, что подобрались вплотную; Гасители героя не трогают.
+                // Остальные Тени сгорают в свете автобуса сами: тратить на них выстрелы невыгодно.
+                Vector3 eye = pc.EyePos;
+                Enemy best = null;
+                float bestScore = 1e9f;
+                for (int i = 0; i < Enemy.All.Count; i++)
+                {
+                    Enemy e = Enemy.All[i];
+                    if (e == null || e.Health <= 0f || e.Kind == EnemyKind.Snuffer) continue;
+                    Vector3 d = e.transform.position - eye;
+                    d.y = 0f;
+                    float dist = d.magnitude;
+                    if (e.Kind == EnemyKind.Shade && dist > 5f) continue;
+                    if (dist > GameConfig.CombatRange * 0.9f || !CityMap.LineClear(eye.x, eye.z, e.transform.position.x, e.transform.position.z, 0.15f, false)) continue;
+                    // автобус, машины и дома закрывают луч: по такой цели умелый игрок не стреляет
+                    if (Physics.Linecast(eye, e.transform.position + Vector3.up * 1.2f, ~0, QueryTriggerInteraction.Ignore)) continue;
+                    float score = dist - (e.Kind == EnemyKind.Eater ? 100f : 0f);
+                    if (score < bestScore) { bestScore = score; best = e; }
+                }
+                if (best != null)
+                {
+                    Vector3 to = best.transform.position + Vector3.up * 1.2f - eye;
+                    float hor = new Vector2(to.x, to.z).magnitude;
+                    SetYaw(pc, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg);
+                    SetPitch(pc, -Mathf.Atan2(to.y, hor) * Mathf.Rad2Deg);
+                    if (frame % 3 == 0 && gm.Hero.Life > 8f) pc.Combat.FireShot();
+                }
+            }
+
+            if (frame % 300 == 6)
+            {
+                report.AppendLine("  t=" + t.ToString("F0").PadLeft(2) + " s: left " + bus.FinalLeft.ToString("F0").PadLeft(2) + ", hero light " + gm.Hero.Life.ToString("F0").PadLeft(3)
+                    + ", shades " + Enemy.CountOf(EnemyKind.Shade) + " snuffers " + Enemy.CountOf(EnemyKind.Snuffer) + " eaters " + Enemy.CountOf(EnemyKind.Eater)
+                    + ", orbs " + LightOrb.All.Count + ", kills " + (gm.EnemiesKilled - standKills0)
+                    + ", spent on shots " + gm.Economy.Amount(LightReason.Shot, false, false).ToString("F0") + ", from orbs " + gm.Economy.Amount(LightReason.Orb, true, false).ToString("F0"));
+            }
+            if (frame == 6 + 600) Capture("fs_10s");
+            if (frame == 6 + 3000) Capture("fs_50s");
+
+            if (gm.State == GameState.Dead)
+            {
+                report.AppendLine("HERO DIED at t=" + t.ToString("F1") + " s (bus had " + bus.FinalLeft.ToString("F0") + " s left), kills " + (gm.EnemiesKilled - standKills0));
+                Finish("OK", errors > 0 ? 2 : 0);
+                return;
+            }
+            if (bus.State != Bus.Mode.Running)
+            {
+                report.AppendLine("BUS LEFT at t=" + t.ToString("F1") + " s, hero light " + gm.Hero.Life.ToString("F0") + " (lowest " + standMinLife.ToString("F0")
+                    + "), most enemies at once " + standMaxEnemies + ", kills " + (gm.EnemiesKilled - standKills0)
+                    + ", spent on shots " + gm.Economy.Amount(LightReason.Shot, false, false).ToString("F0") + ", from orbs " + gm.Economy.Amount(LightReason.Orb, true, false).ToString("F0"));
+                Finish("OK", errors > 0 ? 2 : 0);
+                return;
+            }
+            if (frame > 6 + 4200) Finish("TIMEOUT: the bus did not leave in 70 s", 3);
         }
 
         /// <summary>Без окна: человек идёт за героем через парки (деревья, скамейки, клумбы): не должен застрять.</summary>

@@ -459,7 +459,10 @@ namespace PokaGoryu
         {
             Bus bus = Bus.Instance;
             if (bus != null && bus.State == Bus.Mode.Running)
-                return "Держи круг! До отправления: " + Mathf.CeilToInt(Mathf.Max(0f, bus.FinalLeft)) + " с";
+            {
+                int left = Mathf.CeilToInt(Mathf.Max(0f, bus.FinalLeft));
+                return "Держи круг! До отправления: " + (left / 60) + ":" + (left % 60).ToString("00");
+            }
 
             if (bus != null && bus.State == Bus.Mode.Idle && Player != null && bus.DistanceTo(Player.transform.position) < 34f)
             {

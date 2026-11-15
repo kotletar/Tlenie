@@ -5,8 +5,9 @@ namespace PokaGoryu
     /// <summary>
     /// Заброшенный автобус на автовокзале. Его заводят светом: встань у двери (светящееся кольцо на земле)
     /// и держи F — герой отдаёт свой свет, а каждый спасённый рядом добавляет сам. Шкала «топлива» — окна автобуса,
-    /// которые загораются по мере зарядки. Когда автобус заведён, люди садятся, а герой удерживает круг
-    /// (финальная волна Тьмы). Потом автобус уезжает по дороге из города на рассвет — победа.
+    /// которые загораются по мере зарядки. Когда автобус заведён, люди садятся, а герой удерживает круг целую минуту
+    /// (финальная волна Тьмы, GameConfig.FinalTime; на эту минуту играет музыка из MusicDirector). Потом автобус уезжает
+    /// по дороге из города на рассвет — победа.
     /// </summary>
     public class Bus : MonoBehaviour, ILightSource
     {
@@ -18,6 +19,11 @@ namespace PokaGoryu
         public float Charge;
         public float FinalLeft;
         public int BoardedCount;
+
+        /// <summary>Сколько всего длится последняя минута (GameConfig.FinalTime на момент запуска двигателя).</summary>
+        public float StandLength { get; private set; }
+        /// <summary>Сколько секунд обороны уже прошло: по нему идёт музыка последней минуты.</summary>
+        public float StandElapsed { get { return Mathf.Clamp(StandLength - FinalLeft, 0f, StandLength); } }
 
         /// <summary>true в концовке: автобус едет не сам, его ведёт режиссёр (EndingDirector).</summary>
         public bool Scripted;
@@ -35,7 +41,6 @@ namespace PokaGoryu
         Material gaugeMat;
         Transform ring;
         AudioSource engine;
-        float runT;
         float leaveT;
 
         public static Bus Create(Transform parent, Vector3 pos)
@@ -118,12 +123,12 @@ namespace PokaGoryu
         {
             if (State != Mode.Idle) return;
             State = Mode.Running;
-            runT = 0f;
-            FinalLeft = GameConfig.FinalTime;
+            StandLength = GameConfig.FinalTime;
+            FinalLeft = StandLength;
             GameManager gm = GameManager.Instance;
             if (gm != null)
             {
-                gm.Notify("Автобус заведён! Держите круг, пока люди садятся");
+                gm.Notify("Автобус заведён! Продержитесь минуту, пока люди садятся");
                 if (gm.Dir != null) gm.Dir.StartFinal();
             }
             for (int i = 0; i < Survivor.All.Count; i++) Survivor.All[i].BeginBoarding(DoorPos);
@@ -169,9 +174,9 @@ namespace PokaGoryu
             State = Mode.Idle;
             Charge = 0f;
             BoardedCount = 0;
-            runT = 0f;
             leaveT = 0f;
             FinalLeft = 0f;
+            StandLength = 0f;
             transform.position = startPos;
             if (engine != null) AudioMix.SetVolume(engine, 0f);
         }
@@ -231,7 +236,6 @@ namespace PokaGoryu
             }
             else if (State == Mode.Running)
             {
-                runT += dt;
                 FinalLeft -= dt;
                 lampMat.SetColor("_Color", new Color(1f, 1f, 0.92f, 1f));
                 haloMat.SetColor("_Color", new Color(0.9f, 0.95f, 1f, 0.55f));
@@ -239,13 +243,10 @@ namespace PokaGoryu
                 AudioMix.SetVolume(engine, 0.6f);
                 ringMat.SetColor("_Color", new Color(0.6f, 1f, 0.7f, 0.5f));
 
-                bool anyWaiting = false;
-                for (int i = 0; i < Survivor.All.Count; i++)
-                {
-                    Survivor.Mode m = Survivor.All[i].State;
-                    if (m == Survivor.Mode.Following || m == Survivor.Mode.Boarding) anyWaiting = true;
-                }
-                if (FinalLeft <= 0f || (!anyWaiting && runT > 6f)) Leave();
+                // Минута идёт целиком: автобус не уезжает раньше, даже когда все уже сели. Тех, кого разбудили уже во время
+                // обороны, тоже ведём к двери (BeginBoarding трогает только идущих за героем).
+                for (int i = 0; i < Survivor.All.Count; i++) Survivor.All[i].BeginBoarding(DoorPos);
+                if (FinalLeft <= 0f) Leave();
             }
         }
 

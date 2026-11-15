@@ -96,7 +96,7 @@ namespace PokaGoryu
         // ---------- Автобус / финал ----------
         public static float BusNeed = 60f;            // сколько света нужно, чтобы завести автобус
         public static float BusFeedFromSurvivor = 3.5f;
-        public static float FinalTime = 18f;
+        public static float FinalTime = 60f;          // последняя минута: сколько держать оборону после запуска двигателя (раньше 18 с); под неё ляжет музыка
 
         // Spawn pressure and pacing; Standard preserves the previous balance.
         public static float DistrictPressure = 0.3f;
@@ -187,7 +187,7 @@ namespace PokaGoryu
             PizzaReach = 2.4f;
             BusNeed = 60f;
             BusFeedFromSurvivor = 3.5f;
-            FinalTime = 18f;
+            FinalTime = 60f;
             DistrictPressure = 0.3f;
             TidePressure = 1.2f;
             FinalPressure = 1.5f;

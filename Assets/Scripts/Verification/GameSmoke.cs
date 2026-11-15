@@ -347,15 +347,41 @@ namespace PokaGoryu
             input.Key(GKey.F, false);
             Check(bus.State == Bus.Mode.Running && gm.Dir.FinalStand && bus.Charge >= GameConfig.BusNeed && gm.Economy.Amount(LightReason.FeedBus, false, false) > 0,
                 "F charges bus and starts final stand; hero contribution=" + gm.Economy.Amount(LightReason.FeedBus, false, false).ToString("0.0"));
+            Check(Math.Abs(bus.StandLength - 60f) < 0.01f && bus.FinalLeft > 50f && bus.FinalLeft < 60f,
+                "the final stand lasts a whole minute (" + bus.FinalLeft.ToString("0.0") + " s left, length " + bus.StandLength.ToString("0") + " s)");
+            Check(gm.Dir.InHearth && gm.Dir.IsInHearth(bus.DoorPos), "the running bus is the last hearth: light does not smolder at its door");
             yield return new WaitForSecondsRealtime(3f);
             MusicDirector music = GetComponent<MusicDirector>();
             Check(music.TargetIntensity == 1f && music.Intensity > 0.85f, "final stand raises adaptive score");
+
+            // Своя дорожка на минуту. Настоящий файл появится в Resources/Music/FinalMinute; здесь подставляем тихий клип на 75 с.
+            gm.Hero.SetLife(100f, LightReason.Debug);
+            AudioClip finalTrack = AudioClip.Create("TestFinalTrack", 8000 * 75, 1, 8000, false);
+            music.FinalClip = finalTrack;
+            yield return new WaitForSecondsRealtime(1.5f);
+            AudioSource[] stems = FindMusic();
+            Check(music.FinalTrackActive && music.FinalTrackLevel > 0.95f && stems[0].volume < 0.05f && stems[3].volume < 0.05f,
+                "the last minute plays its own track and the stems step aside");
+            gm.SetPaused(true);
+            yield return new WaitForSecondsRealtime(0.3f);
+            Check(music.FinalTrackActive && music.FinalTrackHeld, "the track waits while the game is paused");
+            gm.SetPaused(false);
+            yield return new WaitForSecondsRealtime(0.3f);
+            Check(music.FinalTrackActive && !music.FinalTrackHeld, "the track goes on after the pause");
+            // раньше автобус уезжал через 6 с, как только все сели; теперь ждёт всю минуту
+            Check(bus.State == Bus.Mode.Running && bus.FinalLeft > 35f && bus.FinalLeft < 56f, "the bus does not leave before the minute is up (" + bus.FinalLeft.ToString("0") + " s left)");
+
+            gm.Hero.SetLife(30f, LightReason.Debug);   // погас с малым светом: возрождение (55) должно записаться доходом
             gm.OnHeroDied();
             yield return Key(GKey.R);
             yield return new WaitForSecondsRealtime(0.4f);
             Check(gm.State == GameState.Playing && gm.Hero.Life > 50f && gm.Economy.Amount(LightReason.Respawn, true, false) > 0,
                 "R respawns and accounts for restored light");
             Check(Math.Abs(gm.Economy.ExpectedLight - gm.Hero.Life) < 0.01, "ledger reconciles after respawn");
+            yield return new WaitForSecondsRealtime(0.9f);
+            Check(!music.FinalTrackActive && music.FinalTrackLevel < 0.001f, "the track ends with the stand: the bus is back to idle and the stems return");
+            music.FinalClip = null;
+            Destroy(finalTrack);
             // Настоящий путь: автобус заведён светом и тронулся (Bus.Leave) — классика начинает концовку: автобус везёт героя и людей,
             // это ловушка, Тьма, герой просыпается за кухонным столом.
             Bus.Instance.Feed(GameConfig.BusNeed + 1f);

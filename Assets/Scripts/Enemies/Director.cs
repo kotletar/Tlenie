@@ -64,6 +64,15 @@ namespace PokaGoryu
                 float dz = h.BasePos.z - p.z;
                 if (dx * dx + dz * dz < GameConfig.HearthRadius * GameConfig.HearthRadius) return true;
             }
+            // Заведённый автобус — последний очаг: пока идёт последняя минута, рядом с дверью свет не тлеет и понемногу
+            // возвращается (на целую минуту осады без этого не хватило бы света даже тому, кто почти не стреляет).
+            Bus bus = Bus.Instance;
+            if (bus != null && bus.State == Bus.Mode.Running)
+            {
+                float bx = bus.DoorPos.x - p.x;
+                float bz = bus.DoorPos.z - p.z;
+                if (bx * bx + bz * bz < GameConfig.HearthRadius * GameConfig.HearthRadius) return true;
+            }
             return false;
         }
 
