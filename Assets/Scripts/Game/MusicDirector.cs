@@ -65,6 +65,15 @@ namespace PokaGoryu
                 motif = 0.10f + 0.18f * blackout;
                 pressure = 0.18f * blackout;
             }
+            else if (gm.State == GameState.Ending && gm.Ending != null)
+            {
+                // Ending: a warm bed while the bus rides toward the "dawn", the stems drain away as the trap closes, silence in the kitchen.
+                float ride = 1f - Mathf.InverseLerp(14.2f, 15.4f, gm.Ending.Elapsed);
+                float trap = Mathf.InverseLerp(10.0f, 14.6f, gm.Ending.Elapsed);
+                bed = ride * Mathf.Lerp(0.30f, 0.18f, trap);
+                motif = ride * 0.22f * (1f - trap);
+                pressure = ride * 0.75f * trap;
+            }
             // Death and victory fade every stem out, leaving the existing event cues audible.
             float pause = gm.Paused ? 0.18f : 1f;
             MoveGain(0, bed * pause, dt);

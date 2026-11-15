@@ -158,7 +158,58 @@ namespace PokaGoryu
 
             Setup(leftHand);
             Setup(rightHand);
+            SetupExtraBeams();
             RegisterLights();
+        }
+
+        // ------------------------------------------------------------------ отражённые участки луча (зеркала хранилищ света)
+
+        const int ExtraBeams = 6;
+        Transform[] extraRoot, extraOuter, extraCore;
+
+        void SetupExtraBeams()
+        {
+            Material yel = OwnedResources.Keep(gameObject, Gfx.Unlit(Yellow, null, false, true, 0f));
+            Material wht = OwnedResources.Keep(gameObject, Gfx.Unlit(White, null, false, true, 0f));
+            extraRoot = new Transform[ExtraBeams];
+            extraOuter = new Transform[ExtraBeams];
+            extraCore = new Transform[ExtraBeams];
+            for (int i = 0; i < ExtraBeams; i++)
+            {
+                extraRoot[i] = new GameObject("BeamLeg" + i).transform;
+                extraRoot[i].SetParent(transform, false);
+                extraOuter[i] = NewCube("Outer", extraRoot[i], yel);
+                extraCore[i] = NewCube("Core", extraRoot[i], wht);
+                extraRoot[i].gameObject.SetActive(false);
+            }
+        }
+
+        /// <summary>Участки луча после зеркал: ладони рисуют только прямую часть до первого зеркала, дальше рисуем сами (толще после линзы).</summary>
+        void UpdateExtraBeams(float lenF, float th)
+        {
+            if (extraRoot == null) return;
+            int used = 0;
+            if (mode == Mode.Shot && lenF > 0.98f && th > 0.01f && BeamTrace.Count > 1)
+            {
+                float widthMul = Mathf.Lerp(1f, mergedWidthMultiplier, mergeT);
+                for (int s = 0; s < BeamTrace.Count && used < ExtraBeams; s++)
+                {
+                    BeamSeg seg = BeamTrace.Segs[s];
+                    if (!seg.Reflected) continue;
+                    Transform r = extraRoot[used];
+                    if (!r.gameObject.activeSelf) r.gameObject.SetActive(true);
+                    r.position = seg.O;
+                    r.rotation = Quaternion.LookRotation(seg.D);
+                    float boost = seg.Focus > 1.5f ? 1.35f : 1f;
+                    SetBeam(extraOuter[used], beamWidth * th * widthMul * boost, seg.Len);
+                    SetBeam(extraCore[used], beamCoreWidth * th * widthMul * boost, seg.Len);
+                    used++;
+                }
+            }
+            for (int i = used; i < ExtraBeams; i++)
+            {
+                if (extraRoot[i].gameObject.activeSelf) extraRoot[i].gameObject.SetActive(false);
+            }
         }
 
         public void RegisterLights()
@@ -468,6 +519,7 @@ namespace PokaGoryu
 
             ApplyHand(leftHand, oL, mid, false, lenF, th * power, orbS, li * power, open, fl);
             ApplyHand(rightHand, oR, mid, true, lenF, th * power, orbS, li * power, open, fl);
+            UpdateExtraBeams(lenF, th * power);
 
             if (beamLoop != null)
             {
@@ -482,13 +534,10 @@ namespace PokaGoryu
         {
             if (cam == null) return;
             Transform ct = cam.transform;
-            Ray ray = new Ray(ct.position, ct.forward);
-            RaycastHit hit;
-            aimDist = maxRange;
-            if (Physics.Raycast(ray, out hit, maxRange, hitMask, QueryTriggerInteraction.Ignore))
-            {
-                aimDist = hit.distance;
-            }
+            // путь луча: прямо до первого твёрдого или зеркала, дальше по зеркалам (BeamTrace); ладони рисуют первый участок
+            bool firing = mode == Mode.Shot && phase == ShotPhase.Beam;
+            BeamTrace.Trace(ct.position, ct.forward, maxRange, hitMask, firing);
+            aimDist = BeamTrace.FirstLeg;
             aimPoint = ct.position + ct.forward * aimDist;
         }
 
@@ -496,10 +545,23 @@ namespace PokaGoryu
         void DealShotDamage(float dmg)
         {
             if (cam == null) return;
-            Transform ct = cam.transform;
-            Vector3 o = ct.position;
-            Vector3 dir = ct.forward;
-            float best = aimDist + 0.3f;
+            // по всему пути луча: прямой участок, отражённые участки после зеркал, усиление после линз
+            Vector3 firstEnd = cam.transform.position + cam.transform.forward * aimDist;
+            for (int s = 0; s < BeamTrace.Count; s++)
+            {
+                BeamSeg seg = BeamTrace.Segs[s];
+                float reach = DamageAlong(seg, dmg * seg.Focus);
+                if (s == 0) firstEnd = seg.O + seg.D * reach;
+            }
+            if (BeamHit != null) BeamHit(firstEnd);
+        }
+
+        /// <summary>Урон ближайшей цели на одном участке пути луча (враг, стена Тьмы, ложный огонь); возвращает, докуда дошёл луч.</summary>
+        float DamageAlong(BeamSeg seg, float dmg)
+        {
+            Vector3 o = seg.O;
+            Vector3 dir = seg.D;
+            float best = seg.Len + 0.3f;
             ILightTarget target = null;
 
             for (int i = 0; i < Enemy.All.Count; i++)
@@ -544,8 +606,10 @@ namespace PokaGoryu
                 }
             }
 
-            if (target != null) target.OnLightHit(dmg);
-            if (BeamHit != null) BeamHit(o + dir * best);
+            Growth wall = target as Growth;
+            if (wall != null) wall.BurnBeam(dmg, seg.Reflected);   // печать хранилища горит только от отражённого луча
+            else if (target != null) target.OnLightHit(dmg);
+            return best;
         }
 
         /// <summary>Вспышка вокруг героя: враги в радиусе оглушены и ранены, стена Тьмы рядом обожжена, ложные огни рассеяны.</summary>

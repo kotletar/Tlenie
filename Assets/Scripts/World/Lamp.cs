@@ -36,10 +36,13 @@ namespace PokaGoryu
         public float Progress;      // доля пути до автобуса (для контрольных точек)
 
         public Vector3 BasePos { get { return basePos; } }
+        /// <summary>Куда смотрит кронштейн (от стены на улицу), горизонтально, длина 1.</summary>
+        public Vector3 ArmDir { get { return armDir; } }
         public bool Dead { get { return dead; } }
         public Vector3 FocusPoint { get { return basePos + Vector3.up * 1.4f; } }
 
         Vector3 basePos;
+        Vector3 armDir = Vector3.forward;
         Vector3 lightPos;
         Vector3 lightLocal;
         bool dead;
@@ -69,9 +72,10 @@ namespace PokaGoryu
             return l;
         }
 
-        void Setup(Vector3 pos, Vector3 armDir, float charge, bool unstable, bool decoy, bool hearth, Color lampTint)
+        void Setup(Vector3 pos, Vector3 armDirection, float charge, bool unstable, bool decoy, bool hearth, Color lampTint)
         {
             basePos = pos;
+            armDir = armDirection;
             Charge = charge;
             InitialCharge = charge;
             Unstable = unstable;
@@ -153,6 +157,36 @@ namespace PokaGoryu
         {
             All.Remove(this);
             LightField.Unregister(this);
+        }
+
+        /// <summary>
+        /// Имя первого твёрдого предмета, которого касается фонарь (основание, мачта, кронштейн, плафон), или null. margin раздувает
+        /// проверку: 0 — настоящее пересечение (столб «в доме»), 0.3 — фонарь вплотную к стене («параллелен дому»). Для проверки расстановки.
+        /// </summary>
+        public string SolidContact(float margin)
+        {
+            if (IsHearth) return null;
+            Vector3 up = Vector3.up;
+            Quaternion q = Quaternion.LookRotation(armDir, up);
+            Vector3 headC = basePos + armDir * 1.2f + up * 4.42f;
+            Vector3 armC = basePos + armDir * 0.62f + up * 4.5f;
+            string hit = FirstSolid(Physics.OverlapBox(basePos + up * 0.06f, new Vector3(0.28f + margin, 0.06f + margin, 0.28f + margin), Quaternion.identity, ~0, QueryTriggerInteraction.Ignore));
+            if (hit == null) hit = FirstSolid(Physics.OverlapCapsule(basePos + up * 0.25f, basePos + up * 4.25f, 0.12f + margin, ~0, QueryTriggerInteraction.Ignore));
+            if (hit == null) hit = FirstSolid(Physics.OverlapBox(armC, new Vector3(0.05f + margin, 0.15f + margin, 0.66f), q, ~0, QueryTriggerInteraction.Ignore));
+            if (hit == null) hit = FirstSolid(Physics.OverlapBox(headC, new Vector3(0.18f + margin, 0.1f + margin, 0.37f + margin), q, ~0, QueryTriggerInteraction.Ignore));
+            return hit;
+        }
+
+        static string FirstSolid(Collider[] hits)
+        {
+            for (int i = 0; i < hits.Length; i++)
+            {
+                Collider c = hits[i];
+                if (c.isTrigger || c.gameObject.name == "Floor") continue;
+                if (c.GetComponentInParent<Survivor>() != null || c.GetComponentInParent<PlayerController>() != null) continue;
+                return c.gameObject.name;
+            }
+            return null;
         }
 
         void Update()

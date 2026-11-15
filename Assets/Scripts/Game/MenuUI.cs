@@ -12,14 +12,14 @@ namespace PokaGoryu
     {
         public static MenuUI Instance;
 
-        enum Page { Root, Help, Settings, Report }
+        enum Page { Root, Help, Settings, Report, Records }
         enum Mode { None, Title, Pause, Dead, Victory }
 
         static readonly Color Gold = new Color(1f, 0.80f, 0.45f, 1f);
         static readonly Color Warm = new Color(1f, 0.92f, 0.75f, 1f);
         static readonly Color Dim = new Color(0.66f, 0.62f, 0.58f, 1f);
 
-        static readonly string[] TitleItems = { "ИГРАТЬ", "КАК ИГРАТЬ", "НАСТРОЙКИ", "ВЫХОД" };
+        static readonly string[] TitleItems = { "ИГРАТЬ", "БЕСКОНЕЧНЫЙ ГОРОД", "РЕКОРДЫ", "КАК ИГРАТЬ", "НАСТРОЙКИ", "ВЫХОД" };
         static readonly string[] PauseItems = { "ПРОДОЛЖИТЬ", "НАЧАТЬ ЗАНОВО", "КАК ИГРАТЬ", "НАСТРОЙКИ", "В ГЛАВНОЕ МЕНЮ", "ВЫЙТИ ИЗ ИГРЫ", "СВЕТ ЗА ЗАБЕГ" };
         static readonly string[] DeadItems = { "К ОЧАГУ  (R)", "В ГЛАВНОЕ МЕНЮ", "СВЕТ ЗА ЗАБЕГ" };
         static readonly string[] WinItems = { "СЫГРАТЬ СНОВА  (R)", "В ГЛАВНОЕ МЕНЮ", "СВЕТ ЗА ЗАБЕГ" };
@@ -34,13 +34,15 @@ namespace PokaGoryu
         static readonly int[][] SettingTabs = { new int[] { 14, 1, 10, 11, 13 }, new int[] { 2, 3, 4, 12, 5 }, new int[] { 0, 6, 7, 8, 9 } };
         static readonly string[] TabNames = { "ИГРА", "ВИД", "ЗВУК" };
         int settingsTab;
+        int recordsMode;                 // страница рекордов: 0 — классика, 1 — бесконечный город
+        int recordsDiff = 1;             // сложность в таблице (Challenge)
         bool recentReport;
         Page page = Page.Root;
         Mode mode = Mode.None;
         int sel;
         Vector2 lastMouse;
         float modeTime;
-        GUIStyle sTitle, sSub, sBtn, sHead, sBody, sSmall, sRow;
+        GUIStyle sTitle, sSub, sBtn, sHead, sBody, sSmall, sRight, sRow;
         AudioSource sfx;
 
         public bool Visible { get { return mode != Mode.None; } }
@@ -99,11 +101,25 @@ namespace PokaGoryu
             return TitleItems;
         }
 
+        /// <summary>Пункты текущего меню. В бесконечном режиме экраны победы и конца забега другие.</summary>
+        string[] CurrentItems()
+        {
+            GameManager gm = GameManager.Instance;
+            if (gm != null && gm.Endless)
+            {
+                if (mode == Mode.Victory)
+                    return new string[] { "ДАЛЬШЕ: ГОРОД " + (gm.City + 1) + "  (R)", "В ГЛАВНОЕ МЕНЮ", "СВЕТ ЗА ЗАБЕГ" };
+                if (mode == Mode.Dead)
+                    return new string[] { gm.RunOver ? "НОВЫЙ ЗАБЕГ  (R)" : "К ОЧАГУ  (R)", "В ГЛАВНОЕ МЕНЮ", "СВЕТ ЗА ЗАБЕГ" };
+            }
+            return ItemsOf(mode);
+        }
+
         int ItemCount()
         {
             if (page == Page.Settings) return SettingTabs[settingsTab].Length + 1;
-            if (page == Page.Help || page == Page.Report) return 1;
-            return ItemsOf(mode).Length;
+            if (page == Page.Help || page == Page.Report || page == Page.Records) return 1;
+            return CurrentItems().Length;
         }
 
         bool Ready(GameManager gm)
@@ -130,6 +146,7 @@ namespace PokaGoryu
             if (!Ready(gm)) return;
             if (page == Page.Settings && GameInput.Down(GKey.Tab)) { settingsTab = (settingsTab + 1) % SettingTabs.Length; sel = 0; Click(0.8f); }
             if (page == Page.Report && GameInput.Down(GKey.Tab)) recentReport = !recentReport;
+            if (page == Page.Records && GameInput.Down(GKey.Tab)) { recordsMode ^= 1; Click(0.8f); }
 
             if (GameInput.Down(GKey.Down) || GameInput.Down(GKey.S)) Move(1);
             if (GameInput.Down(GKey.Up) || GameInput.Down(GKey.W)) Move(-1);
@@ -148,6 +165,12 @@ namespace PokaGoryu
 
         void Adjust(int dir)
         {
+            if (page == Page.Records)
+            {
+                recordsDiff = (recordsDiff + dir + 3) % 3;
+                Click(0.7f);
+                return;
+            }
             if (page != Page.Settings) return;
             if (sel >= SettingTabs[settingsTab].Length) return;
             int id = SettingTabs[settingsTab][sel];
@@ -173,7 +196,7 @@ namespace PokaGoryu
             GameManager gm = GameManager.Instance;
             if (gm == null) return;
 
-            if (page == Page.Help || page == Page.Report)
+            if (page == Page.Help || page == Page.Report || page == Page.Records)
             {
                 Back();
                 return;
@@ -191,8 +214,10 @@ namespace PokaGoryu
             {
                 case Mode.Title:
                     if (i == 0) gm.StartGame();
-                    else if (i == 1) { page = Page.Help; sel = 0; }
-                    else if (i == 2) { page = Page.Settings; sel = 0; }
+                    else if (i == 1) gm.StartEndless();
+                    else if (i == 2) { page = Page.Records; sel = 0; recordsMode = 0; recordsDiff = (int)GameSettings.Difficulty; }
+                    else if (i == 3) { page = Page.Help; sel = 0; }
+                    else if (i == 4) { page = Page.Settings; sel = 0; }
                     else gm.QuitGame();
                     break;
                 case Mode.Pause:
@@ -205,12 +230,12 @@ namespace PokaGoryu
                     else { page = Page.Report; sel = 0; }
                     break;
                 case Mode.Dead:
-                    if (i == 0) gm.Respawn();
+                    if (i == 0) { if (gm.RunOver) gm.Restart(); else gm.Respawn(); }
                     else if (i == 1) gm.QuitToMenu();
                     else { page = Page.Report; sel = 0; }
                     break;
                 case Mode.Victory:
-                    if (i == 0) gm.Restart();
+                    if (i == 0) { if (gm.Endless) gm.NextCity(); else gm.Restart(); }
                     else if (i == 1) gm.QuitToMenu();
                     else { page = Page.Report; sel = 0; }
                     break;
@@ -248,6 +273,9 @@ namespace PokaGoryu
             sSmall.fontSize = 16;
             sSmall.alignment = TextAnchor.MiddleCenter;
             sSmall.wordWrap = false;
+
+            sRight = new GUIStyle(sSmall);
+            sRight.alignment = TextAnchor.LowerRight;
 
             sRow = new GUIStyle(sBody);
             sRow.fontSize = 23;
@@ -344,6 +372,7 @@ namespace PokaGoryu
                 case Page.Help: DrawHelp(vw, vh, repaint, moved); break;
                 case Page.Settings: DrawSettings(vw, vh, repaint, moved); break;
                 case Page.Report: DrawReport(vw, repaint, moved); break;
+                case Page.Records: DrawRecords(vw, repaint, moved); break;
             }
 
             if (repaint) lastMouse = e.mousePosition;
@@ -410,12 +439,13 @@ namespace PokaGoryu
 
         void DrawRoot(float vw, float vh, bool repaint, bool moved)
         {
-            string[] items = ItemsOf(mode);
+            string[] items = CurrentItems();
             float cx = vw * 0.5f;
             float bw = 400f;
             float bh = 56f;
             float gap = 12f;
             float y0 = 300f;
+            if (mode == Mode.Title && items.Length > 4) { bh = 48f; gap = 8f; y0 = 262f; }   // шесть пунктов: теснее, чтобы не лезть на подсказку внизу
 
             if (repaint)
             {
@@ -429,10 +459,11 @@ namespace PokaGoryu
                     GUI.color = Color.white;
                     Txt(new Rect(0f, 90f, vw, 110f), "ПОКА ГОРЮ", sTitle, new Color(Gold.r, Gold.g, Gold.b, flick));
                     Txt(new Rect(0f, 200f, vw, 40f), "не дай погаснуть", sSub, new Color(Warm.r, Warm.g, Warm.b, 0.85f));
-                    Txt(new Rect(0f, 624f, vw, 30f), "v" + GameConfig.Version + "  ·  " + GameDifficulty.Name(GameSettings.Difficulty), sSmall, Dim);
                     Txt(new Rect(0f, 670f, vw, 30f),
-                        "Выбор: стрелки или W/S, мышь    Подтвердить: Enter    Назад: Esc    Игровой джем, тема «Не дай погаснуть»",
+                        "Выбор: стрелки или W/S, мышь    Подтвердить: Enter    Назад: Esc",
                         sSmall, new Color(Warm.r, Warm.g, Warm.b, 0.45f));
+                    // версия — тихо в правом нижнем углу (сложность видна в «Настройках»)
+                    Txt(new Rect(vw - 248f, vh - 40f, 224f, 28f), "v" + GameConfig.Version, sRight, new Color(Dim.r, Dim.g, Dim.b, 0.8f));
                 }
                 else if (mode == Mode.Pause)
                 {
@@ -490,14 +521,17 @@ namespace PokaGoryu
                     "узкие переулки — петли и тупики, там люди, лампы и пицца (E — съесть: это свет). Потерялся — нажми G, огонёк покажет дорогу.\n\n" +
                     "Свет можно взять у лампы (она потускнеет) или отдать: разбудить человека, раздуть лампу, завести автобус. " +
                     "Спасённые согревают тебя в ответ.\n\n" +
-                    "Стену Тьмы, перегородившую улицу, выжги лучом (ЛКМ, держать).\n" +
+                    "Стену Тьмы, перегородившую улицу, выжги лучом (ЛКМ, держать).\n\n" +
+                    "На площадях стоят хранилища света: каморки за печатью Тьмы. Прямой свет печать не берёт — направь луч в зеркало (E — повернуть), " +
+                    "чтобы он отразился в печать. Линза усиливает луч втрое.\n\n" +
+                    "Бесконечный город: за автобусом ждёт следующий город, темнее и опаснее; возвращений к очагу мало. Результаты — в «Рекордах».\n" +
                     "Чтобы увидеть свой свет, посмотри на себя: вниз или Tab — на груди горит полоска из перьев.";
                 string keys =
                     "УПРАВЛЕНИЕ\n" +
                     "WASD — идти, Shift — бежать, мышь — смотреть\n" +
                     "ЛКМ — выстрел, держать — слитый луч\n" +
                     "ПКМ — вспышка света вокруг\n" +
-                    "E (держать) — вдох: взять свет\n" +
+                    "E (держать) — вдох: взять свет; у зеркала — повернуть\n" +
                     "F (держать) — выдох: отдать свет\n" +
                     "Q (держать) — прикрыть огонь\n" +
                     "G — Проводник к автобусу\n" +
@@ -673,6 +707,45 @@ namespace PokaGoryu
                 "Tab — раздел   ↑↓ — выбор   ←→ — значение", sSmall, Dim);
             Rect back = new Rect(vw * 0.5f - 160f, p.yMax - 86f, 320f, 56f);
             if (Button(back, "НАЗАД", rows.Length, repaint, moved)) Back();
+        }
+
+        /// <summary>Таблица рекордов: десять лучших забегов для выбранного режима (Tab) и сложности (стрелки влево/вправо).</summary>
+        void DrawRecords(float vw, bool repaint, bool moved)
+        {
+            float pw = Mathf.Min(1000f, vw - 40f);
+            Rect p = new Rect((vw - pw) * 0.5f, 30f, pw, 660f);
+            DrawPanel(vw, p, "РЕКОРДЫ", repaint);
+            Rect head = new Rect(p.x + 30f, p.y + 100f, pw - 60f, 42f);
+            if (GUI.Button(head, GUIContent.none, GUIStyle.none)) { recordsMode ^= 1; Click(0.8f); }
+            if (repaint)
+            {
+                System.Collections.Generic.List<RunRecord> top = RecordsStore.Table.Top(recordsMode, recordsDiff);
+                Txt(head, (recordsMode == 0 ? "Классика: время до отъезда автобуса" : "Бесконечный город: пройдено городов") + "  ·  "
+                    + GameDifficulty.Name((Challenge)recordsDiff) + "   (Tab — режим, ←→ — сложность)", sSmall, Gold);
+                float rowH = 38f;
+                float x0 = p.x + 40f;
+                float w = pw - 80f;
+                for (int i = 0; i < RunRecords.Keep; i++)
+                {
+                    Rect row = new Rect(x0, p.y + 158f + i * rowH, w, rowH);
+                    if (i % 2 == 0) Fill(row, new Color(1f, 1f, 1f, 0.035f));
+                    RunRecord r = i < top.Count ? top[i] : null;
+                    Color col = r == null ? Dim : (i == 0 ? Gold : Warm);
+                    Txt(new Rect(row.x + 8f, row.y, 56f, rowH), (i + 1) + ".", sRow, col);
+                    if (r == null)
+                    {
+                        Txt(new Rect(row.x + 70f, row.y, 200f, rowH), "—", sRow, Dim);
+                        continue;
+                    }
+                    bool classic = recordsMode == 0;
+                    Txt(new Rect(row.x + 70f, row.y, 210f, rowH), classic ? RunRecords.Clock(r.Seconds) : "городов: " + r.Cities, sRow, col);
+                    Txt(new Rect(row.x + 290f, row.y, 230f, rowH), classic ? "возвращений: " + r.Returns : RunRecords.Clock(r.Seconds), sRow, col);
+                    Txt(new Rect(row.x + 530f, row.y, 190f, rowH), "спасено: " + r.Saved, sRow, col);
+                    Txt(new Rect(row.x + w - 170f, row.y, 160f, rowH), r.Date, sRow, Dim);
+                }
+            }
+            Rect back = new Rect(vw * 0.5f - 160f, p.yMax - 86f, 320f, 56f);
+            if (Button(back, "НАЗАД", 0, repaint, moved)) Back();
         }
 
         void DrawReport(float vw, bool repaint, bool moved)

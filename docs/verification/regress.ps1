@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Force -Path $OutRoot | Out-Null
 $OutRoot = (Resolve-Path -LiteralPath $OutRoot).Path
 $taskCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $taskCoreExe = Join-Path $OutRoot 'CoreChecks.exe'
-$taskSources = @('docs\verification\CoreChecks.cs', 'Assets\Scripts\Core\LightLedger.cs', 'Assets\Scripts\Core\GameConfig.cs', 'Assets\Scripts\Core\GameDifficulty.cs', 'Assets\Scripts\World\CityMap.cs') | ForEach-Object { Join-Path $taskProject $_ }
+$taskSources = @('docs\verification\CoreChecks.cs', 'Assets\Scripts\Core\LightLedger.cs', 'Assets\Scripts\Core\GameConfig.cs', 'Assets\Scripts\Core\GameDifficulty.cs', 'Assets\Scripts\Core\RunRecords.cs', 'Assets\Scripts\World\CityMap.cs') | ForEach-Object { Join-Path $taskProject $_ }
 & $taskCompiler /nologo /utf8output /codepage:65001 (('/out:' + $taskCoreExe)) @taskSources
 if ($LASTEXITCODE -ne 0) { throw 'Core compilation failed' }
 & $taskCoreExe | Tee-Object -FilePath (Join-Path $OutRoot 'core-checks.txt')

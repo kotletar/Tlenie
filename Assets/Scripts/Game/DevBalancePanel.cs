@@ -25,7 +25,7 @@ namespace PokaGoryu
             if (shown && !gm.Paused) shown = false;
             if (!GameInput.Down(GKey.F7)) return;
             if (shown) { shown = false; gm.SetPaused(wasPaused); }
-            else { wasPaused = gm.Paused; shown = true; gm.SetPaused(true); }
+            else { wasPaused = gm.Paused; shown = true; gm.SetPaused(true); gm.Cheated = true; }   // числа баланса правят на лету: рекорд не засчитывается
         }
         void OnGUI()
         {

@@ -15,8 +15,14 @@ namespace PokaGoryu
         const int TrailN = 48;
         static float cooldownLeft;
         static bool freeUsed;
+        static bool playerActivated;
 
         public static float CooldownLeft { get { return cooldownLeft; } }
+        /// <summary>
+        /// Игрок сам вызвал Проводника клавишей G (в том числе нажал её, пока огонёк уже ведёт или отдыхает: он знает, как это делается).
+        /// Автоматический вызов в начале забега не в счёт: пока его нет, в строке цели остаётся подсказка «G — Проводник покажет путь».
+        /// </summary>
+        public static bool PlayerActivated { get { return playerActivated; } }
         public static bool IsActive { get { return Instance != null && Instance.active; } }
 
         bool active;
@@ -57,10 +63,17 @@ namespace PokaGoryu
             if (Instance != null) Instance.Stop();
         }
 
+        /// <summary>Следующий город бесконечного режима: игрок уже знает про Проводника, подсказка в строке цели не возвращается.</summary>
+        public static void KeepKnown(bool known)
+        {
+            playerActivated = known;
+        }
+
         /// <summary>Новая игра: снова один бесплатный вызов, перезарядки нет.</summary>
         public static void ResetAll()
         {
             freeUsed = false;
+            playerActivated = false;
             cooldownLeft = 0f;
             CancelActive();
         }
@@ -104,7 +117,8 @@ namespace PokaGoryu
 
         // ------------------------------------------------------------------ вызов
 
-        public static void TryCast()
+        /// <summary>byPlayer — вызов от клавиши G; автовызов в начале забега (GameManager) идёт без него.</summary>
+        public static void TryCast(bool byPlayer = false)
         {
             if (Instance == null) return;
             PlayerController pl = PlayerController.Instance;
@@ -112,12 +126,14 @@ namespace PokaGoryu
             if (pl == null || gm == null || gm.State != GameState.Playing || gm.Paused) return;
             if (Instance.active)
             {
+                if (byPlayer) playerActivated = true;
                 gm.Notify("Проводник уже ведёт тебя: иди за огоньком");
                 return;
             }
             if (pl.Hero.InLastBreath) return;
             if (cooldownLeft > 0f)
             {
+                if (byPlayer) playerActivated = true;
                 gm.Notify("Проводник отдыхает: " + Mathf.CeilToInt(cooldownLeft) + " с");
                 return;
             }
@@ -141,6 +157,7 @@ namespace PokaGoryu
             freeUsed = true;
             cooldownLeft = GameConfig.GuideCooldown;
             Instance.Begin(p, hp);
+            if (byPlayer) playerActivated = true;
             gm.Notify("Проводник показывает путь к автобусу: иди за огоньком");
         }
 

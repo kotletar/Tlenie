@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace PokaGoryu
 {
-    public enum FocusKind { None, Lamp, Sleeper, Hurt, Orb, Bus, Generator, Pizza }
+    public enum FocusKind { None, Lamp, Sleeper, Hurt, Orb, Bus, Generator, Pizza, Optic }
 
     /// <summary>
     /// Герой от первого лица: движение, обзор, вдох/выдох, прикрыть огонь, Проводник (G).
@@ -41,7 +41,8 @@ namespace PokaGoryu
         float vy;
         float bowDeg;
         float tabT;
-        float stepTimer;
+        const float StepVolume = 0.32f;   // громкость шага до общей громкости «Эффекты»
+        int lastFoot;                     // номер последнего шага: звук шага привязан к качанию головы (WalkPhase)
         float heartTimer;
         Vector3 headBase;
         Vector3 pushVel;
@@ -62,6 +63,7 @@ namespace PokaGoryu
         LightOrb fOrb;
         Generator fGen;
         Pizza fPizza;
+        LightOptic fOptic;
         GameObject focusRing;
         Material focusMat;
         FocusKind candKind;
@@ -301,15 +303,16 @@ namespace PokaGoryu
             walkedMeters += horiz * dt;
             if (walkedMeters > 24f && GameManager.Instance != null) GameManager.Instance.Think("city", "Весь город погас. А я — нет. Почему?..");
 
-            if (Cc.isGrounded && horiz > 0.5f)
+            // Шаг звучит, когда голова в нижней точке качания (WalkPhase = 3π/4 + kπ): звук совпадает с картинкой и со скоростью
+            // ходьбы, ноги чередуются (два варианта звука), громкость растёт со скоростью (бег тяжелее, вдох и выдох тише).
+            int foot = Mathf.FloorToInt((WalkPhase - 0.75f * Mathf.PI) / Mathf.PI);
+            if (foot != lastFoot && Cc.isGrounded && horiz > 0.5f)
             {
-                stepTimer -= dt * (horiz / 4.2f);
-                if (stepTimer <= 0f)
-                {
-                    stepTimer = 0.52f;
-                    ProcAudio.OneShot(stepSrc, "step", 0.35f, Random.Range(0.85f, 1.1f));
-                }
+                float speedK = Mathf.Clamp(horiz / 4.2f, 0.55f, 1.35f);
+                ProcAudio.OneShot(stepSrc, (foot & 1) == 0 ? "step" : "step2",
+                    StepVolume * Mathf.Pow(speedK, 0.7f) * Random.Range(0.85f, 1f), Random.Range(0.94f, 1.06f));
             }
+            lastFoot = foot;
         }
 
         // ------------------------------------------------------------------ фокус
@@ -417,6 +420,16 @@ namespace PokaGoryu
                 Offer(FocusKind.Generator, g, g.FocusPoint, Score(eye, fwd, g.FocusPoint, d));
             }
 
+            // зеркала хранилищ света: повернуть на E (линзы стоят неподвижно)
+            for (int i = 0; i < LightOptic.All.Count; i++)
+            {
+                LightOptic o = LightOptic.All[i];
+                if (o.Kind != OpticKind.Mirror) continue;
+                float d = Horiz(o.transform.position, p);
+                if (d > LightOptic.ReachE) continue;
+                Offer(FocusKind.Optic, o, o.FocusPoint, Score(eye, fwd, o.FocusPoint, d));
+            }
+
             // автобус: встать в кольцо у двери
             Bus bus = Bus.Instance;
             if (bus != null && bus.CanFeed)
@@ -441,6 +454,7 @@ namespace PokaGoryu
             fOrb = candObj as LightOrb;
             fGen = candObj as Generator;
             fPizza = candObj as Pizza;
+            fOptic = candObj as LightOptic;
 
             if (FocusType != FocusKind.None)
             {
@@ -471,7 +485,7 @@ namespace PokaGoryu
             }
 
             // Проводник
-            if (canAct && GameInput.Down(GKey.G)) GuideWisp.TryCast();
+            if (canAct && GameInput.Down(GKey.G)) GuideWisp.TryCast(true);
 
             Inhaling = false;
             Exhaling = false;
@@ -517,6 +531,12 @@ namespace PokaGoryu
 
                 case FocusKind.Lamp:
                     ActOnLamp(fLamp, wantE, wantF, dt);
+                    break;
+
+                case FocusKind.Optic:
+                    // одно нажатие — поворот на 45°: смотри, как уходит отражённый луч
+                    PromptE = "[E] повернуть зеркало";
+                    if (canAct && !cover && !attacking && GameInput.Down(GKey.E)) fOptic.Rotate();
                     break;
 
                 case FocusKind.Sleeper:

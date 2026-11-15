@@ -2,11 +2,12 @@ using UnityEngine;
 
 namespace PokaGoryu
 {
-    public enum GameState { Title, Intro, Playing, Dead, Victory }
+    public enum GameState { Title, Intro, Playing, Dead, Victory, Ending }
 
     /// <summary>
     /// Главный объект игры. Создаётся сам (Bootstrap) в любой сцене, строит мир кодом и ведёт состояния:
-    /// титульный экран -> предыстория (кухня, ожог свечой) -> игра -> смерть (возврат к очагу) -> победа.
+    /// титульный экран -> предыстория (кухня, ожог свечой) -> игра -> смерть (возврат к очагу) -> концовка (автобус, ловушка,
+    /// пробуждение за кухонным столом) -> итог. В бесконечном городе концовки нет: за автобусом сразу следующий город.
     /// </summary>
     public class GameManager : MonoBehaviour
     {
@@ -23,6 +24,7 @@ namespace PokaGoryu
         public MenuUI Menu;
         public FeatherHealthBar Bar;       // полоска здоровья «Перья» (на груди героя)
         public IntroDirector Intro;        // предыстория: кухня, блэкаут, ожог свечой
+        public EndingDirector Ending;      // концовка: поездка, ловушка, пробуждение на кухне
         public Transform WorldRoot;
 
         // Статистика для финала
@@ -35,6 +37,39 @@ namespace PokaGoryu
         public float WinFade;
         public bool DebugOverlay;
         public readonly LightLedger Economy = new LightLedger();
+        /// <summary>
+        /// Строка с кнопками внизу экрана: видна с начала забега и пропадает, когда герой дошёл до первого очага после старта
+        /// (Director.UpdateHearths). В новом забеге снова видна.
+        /// </summary>
+        public bool ControlHintsVisible = true;
+
+        // ------------------------------------------------------------------ режим «Бесконечный город» и рекорды
+
+        /// <summary>
+        /// Бесконечный город: после каждого города автобус везёт в следующий (та же карта, другие лампы, реквизит и декор, темнее и
+        /// опаснее: GameDifficulty.City). Возвращений к очагу ограниченное число (3 в начале, +1 за город, не больше 5); погас без
+        /// возвращений — забег окончен, результат идёт в таблицу рекордов. В классике Endless = false и всё как раньше.
+        /// </summary>
+        public bool Endless;
+        public int City = 1;                 // номер города в забеге бесконечного режима
+        public int ReturnsLeft;              // сколько раз ещё можно вернуться к очагу (только бесконечный режим)
+        public bool RunOver;                 // бесконечный забег закончен
+        public bool Cheated;                 // отладочные клавиши или панель баланса: рекорд не засчитывается
+        public int LastRank;                 // место последнего забега в таблице (0 — не вошёл или не засчитан)
+        [System.NonSerialized] public RunRecord LastRecord;   // запись последнего забега (для экранов победы и конца забега)
+        public float CityTime;               // время в текущем городе
+        public const int EndlessReturnsStart = 3;
+        public const int EndlessReturnsMax = 5;
+
+        /// <summary>Сколько городов уже пройдено в этом забеге бесконечного режима (на экране победы — включая только что пройденный).</summary>
+        public int CitiesCleared { get { return Endless ? City - 1 + (State == GameState.Victory ? 1 : 0) : 0; } }
+
+        int endlessSaved;                    // огоньков спасено в прошлых городах
+        bool endlessSubmitted;
+        bool nextCityRequested;
+        bool newEndlessRequested;
+        Challenge runDifficulty;
+        bool difficultyTouched;
 
         bool restartRequested;
         float autoGuideT;
@@ -74,6 +109,7 @@ namespace PokaGoryu
             Menu = gameObject.AddComponent<MenuUI>();
             Bar = gameObject.AddComponent<FeatherHealthBar>();
             Intro = gameObject.AddComponent<IntroDirector>();
+            Ending = gameObject.AddComponent<EndingDirector>();
             LowRes lr = gameObject.AddComponent<LowRes>();
             lr.Init(Player.Cam);
             GuideWisp.Create(transform);
@@ -105,10 +141,15 @@ namespace PokaGoryu
 
         // ------------------------------------------------------------------ мир
 
-        void BuildWorld()
+        /// <summary>
+        /// Собрать мир заново. keepRun — следующий город бесконечного режима: время забега, возвращения и уже показанные мысли
+        /// сохраняются, памятка по кнопкам не возвращается. startLife — с каким светом начать (по умолчанию StartLight).
+        /// </summary>
+        void BuildWorld(bool keepRun = false, float startLife = -1f)
         {
-            thoughtsSeen.Clear();
+            if (!keepRun) thoughtsSeen.Clear();
             startThoughtT = -1f;
+            ControlHintsVisible = !keepRun;
             if (WorldRoot != null)
             {
                 WorldRoot.gameObject.SetActive(false);
@@ -121,17 +162,20 @@ namespace PokaGoryu
             LightOrb.All.Clear();
             Pizza.All.Clear();
             Growth.All.Clear();
+            LightOptic.All.Clear();
             Generator.All.Clear();
             Player.RegisterLights();
             GuideWisp.ResetAll();
             if (GuideWisp.Instance != null) LightField.Register(GuideWisp.Instance);
 
+            GameDifficulty.City = Endless ? City : 1;
+            LevelBuilder.CitySeed = Endless ? City - 1 : 0;
             WorldRoot = new GameObject("World").transform;
             LevelBuilder.Build(WorldRoot);
             AudioMix.AddTunnelZone(WorldRoot);
             Dir.ResetAll();
 
-            Hero.ResetFor(GameConfig.StartLight);
+            Hero.ResetFor(startLife > 0f ? startLife : GameConfig.StartLight);
             Player.TeleportTo(LevelBuilder.StartPos, LevelBuilder.StartYaw);
             Player.ResetWalked();
             TideFactor = 1f;
@@ -139,22 +183,34 @@ namespace PokaGoryu
             SurvivorsWoken = 0;
             SurvivorsLost = 0;
             EnemiesKilled = 0;
-            Deaths = 0;
-            PlayTime = 0f;
             WinFade = 0f;
+            CityTime = 0f;
+            if (!keepRun)
+            {
+                Deaths = 0;
+                PlayTime = 0f;
+                Cheated = false;
+                difficultyTouched = false;
+                LastRank = 0;
+                LastRecord = null;
+            }
             Economy.Reset(Hero.Life);
             if (UI != null) UI.ResetRun();
         }
 
+        /// <summary>Начать заново: в классике — тот же город с начала; в бесконечном режиме — новый забег с первого города.</summary>
         public void Restart()
         {
-            restartRequested = true;
+            if (Endless) newEndlessRequested = true;
+            else restartRequested = true;
         }
 
         /// <summary>Кнопка «Играть» в главном меню: сначала предыстория (её можно пропустить), потом игра.</summary>
         public void StartGame()
         {
             if (State != GameState.Title) return;
+            Endless = false;
+            City = 1;
             if (Intro != null && Intro.Begin())
             {
                 State = GameState.Intro;
@@ -163,12 +219,74 @@ namespace PokaGoryu
             BeginPlay();
         }
 
+        /// <summary>Кнопка «Бесконечный город»: без предыстории; первый город равен классике, дальше каждый темнее и опаснее.</summary>
+        public void StartEndless()
+        {
+            if (State != GameState.Title) return;
+            ResetEndlessRun();
+            BeginPlay();
+        }
+
+        void ResetEndlessRun()
+        {
+            Endless = true;
+            City = 1;
+            ReturnsLeft = EndlessReturnsStart;
+            RunOver = false;
+            endlessSubmitted = false;
+            endlessSaved = 0;
+            LastRank = 0;
+            LastRecord = null;
+        }
+
         void BeginPlay()
         {
             State = GameState.Playing;
             autoGuideT = 2.0f;
             startThoughtT = 3.5f;
-            Notify("Иди к свету на горизонте. У лампы зажми E: вдох. Потухших людей буди выдохом (F)");
+            runDifficulty = GameDifficulty.Mode;
+            difficultyTouched = false;
+            if (Endless) Notify("Бесконечный город. Автобус увезёт дальше, но следующий город темнее. Возвращений к очагу: " + ReturnsLeft);
+            else Notify("Иди к свету на горизонте. У лампы зажми E: вдох. Потухших людей буди выдохом (F)");
+        }
+
+        /// <summary>Победа в бесконечном режиме: автобус увозит в следующий город (клавиша R или кнопка на экране победы).</summary>
+        public void NextCity()
+        {
+            if (Endless && State == GameState.Victory) nextCityRequested = true;
+        }
+
+        /// <summary>Идёт ли забег, который попадёт в таблицу рекордов (без отладки и без смены сложности на ходу).</summary>
+        public bool RunCounts { get { return !Cheated && !difficultyTouched; } }
+
+        RunRecord MakeRecord(int mode, int cities, int saved)
+        {
+            RunRecord r = new RunRecord();
+            r.Mode = mode;
+            r.Difficulty = (int)runDifficulty;
+            r.Seconds = PlayTime;
+            r.Cities = cities;
+            r.Returns = Deaths;
+            r.Saved = saved;
+            r.Date = System.DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            return r;
+        }
+
+        /// <summary>Классика: автобус уехал — время забега в таблицу рекордов.</summary>
+        void SubmitClassicRecord(int boarded)
+        {
+            LastRecord = MakeRecord(RunRecords.Classic, 1, boarded);
+            LastRank = RunCounts ? RecordsStore.Submit(LastRecord) : 0;
+        }
+
+        /// <summary>Бесконечный режим: забег закончился (погас без возвращений, ушёл в меню или начал заново) — результат в таблицу.</summary>
+        void SubmitEndlessRecord()
+        {
+            if (!Endless || endlessSubmitted) return;
+            endlessSubmitted = true;
+            int cleared = CitiesCleared;
+            LastRecord = MakeRecord(RunRecords.Endless, cleared, endlessSaved);
+            LastRank = RunCounts && cleared >= 1 ? RecordsStore.Submit(LastRecord) : 0;
         }
 
         /// <summary>Мысль героя (внизу экрана, мягким голубоватым цветом). key — чтобы показать её только один раз за забег.</summary>
@@ -193,6 +311,10 @@ namespace PokaGoryu
         public void QuitToMenu()
         {
             if (Intro != null) Intro.Abort();
+            if (Ending != null) Ending.Abort();
+            SubmitEndlessRecord();   // вышел из бесконечного режима: что успел пройти — в таблицу
+            Endless = false;
+            City = 1;
             Time.timeScale = 1f;
             Paused = false;
             BuildWorld();
@@ -213,6 +335,12 @@ namespace PokaGoryu
         public void Respawn()
         {
             if (State != GameState.Dead) return;
+            if (Endless)
+            {
+                // возвращений к очагу ограниченное число; закончились — забег окончен (OnHeroDied)
+                if (RunOver || ReturnsLeft <= 0) return;
+                ReturnsLeft--;
+            }
             Dir.Respawn();
             State = GameState.Playing;
         }
@@ -231,6 +359,11 @@ namespace PokaGoryu
             Deaths++;
             SaveLightReport();
             ProcAudio.OneShot(Player.Sfx, "tide", 1f, 0.8f);
+            if (Endless && ReturnsLeft <= 0)
+            {
+                RunOver = true;
+                SubmitEndlessRecord();
+            }
         }
 
         public void Win()
@@ -238,8 +371,30 @@ namespace PokaGoryu
             if (State != GameState.Playing) return;
             State = GameState.Victory;
             WinFade = 0f;
-            ProcAudio.OneShot(Player.Sfx, "win", 1f, 1f);
             SaveLightReport();
+            int boarded = Bus.Instance != null ? Bus.Instance.BoardedCount : 0;
+            if (Endless)
+            {
+                ProcAudio.OneShot(Player.Sfx, "win", 1f, 1f);
+                endlessSaved += boarded;
+                return;
+            }
+            SubmitClassicRecord(boarded);   // время и место фиксируются сразу, концовка их не меняет
+            // классика: автобус уезжает с героем и людьми, и это оказывается ловушкой (EndingDirector); итог — после неё
+            if (Ending != null)
+            {
+                State = GameState.Ending;
+                if (!Ending.Begin()) State = GameState.Victory;
+            }
+            if (State == GameState.Victory) ProcAudio.OneShot(Player.Sfx, "win", 1f, 1f);
+        }
+
+        /// <summary>Концовка закончилась (или её пропустили): экран итога.</summary>
+        public void FinishEnding()
+        {
+            if (State != GameState.Ending) return;
+            State = GameState.Victory;
+            WinFade = 0f;
         }
 
         void SaveLightReport()
@@ -318,16 +473,19 @@ namespace PokaGoryu
                 for (int i = 0; i < Growth.All.Count; i++)
                 {
                     Growth g = Growth.All[i];
-                    if (g.Dead) continue;
+                    if (g.Dead || g.Sealed) continue;   // печать хранилища путь не закрывает
                     float dx = g.Center.x - pp.x;
                     float dz = g.Center.z - pp.z;
                     if (dx * dx + dz * dz < 30f * 30f) return "Путь закрыла стена Тьмы. Выжги её светом: ЛКМ (держать)";
                 }
             }
 
-            if (SurvivorsWoken == 0 && PlayTime < 150f)
+            if (SurvivorsWoken == 0 && CityTime < 150f)
                 return "Найди потухших людей (красные угольки) и разбуди: подойди и держи F";
-            return "Идите к автовокзалу: столб света над городом. G — Проводник покажет путь";
+            // подсказка про Проводника живёт, пока игрок сам его не вызвал (автовызов в начале не считается)
+            return GuideWisp.PlayerActivated
+                ? "Идите к автовокзалу: столб света над городом"
+                : "Идите к автовокзалу: столб света над городом. G — Проводник покажет путь";
         }
 
         // ------------------------------------------------------------------ кадр
@@ -344,6 +502,34 @@ namespace PokaGoryu
                 Time.timeScale = 1f;
                 State = GameState.Playing;
                 autoGuideT = 2.0f;
+                runDifficulty = GameDifficulty.Mode;
+            }
+            if (newEndlessRequested)
+            {
+                // новый забег бесконечного режима (с паузы, с экрана конца забега): прошлый, если успел пройти город, идёт в таблицу
+                newEndlessRequested = false;
+                SubmitEndlessRecord();
+                ResetEndlessRun();
+                BuildWorld();
+                Paused = false;
+                Time.timeScale = 1f;
+                BeginPlay();
+            }
+            if (nextCityRequested)
+            {
+                // автобус привёз в следующий город: время забега и возвращения идут дальше, свет не меньше стартового
+                nextCityRequested = false;
+                float carried = Hero.Life;
+                bool knewGuide = GuideWisp.PlayerActivated;
+                City++;
+                ReturnsLeft = Mathf.Min(ReturnsLeft + 1, EndlessReturnsMax);
+                BuildWorld(true, Mathf.Clamp(Mathf.Max(carried, GameConfig.StartLight), 1f, GameConfig.MaxLight));
+                GuideWisp.KeepKnown(knewGuide);
+                Paused = false;
+                Time.timeScale = 1f;
+                State = GameState.Playing;
+                autoGuideT = 0f;
+                Notify("Город " + City + ". Темнее прежнего. Возвращений к очагу: " + ReturnsLeft);
             }
 
             switch (State)
@@ -364,6 +550,8 @@ namespace PokaGoryu
                     if (!Paused)
                     {
                         PlayTime += dt;
+                        CityTime += dt;
+                        if (GameDifficulty.Mode != runDifficulty) difficultyTouched = true;   // сложность сменили на ходу: рекорд не засчитывается
                         Economy.Tick(PlayTime);
                         Dir.Tick(dt);
                         if (autoGuideT > 0f)
@@ -381,11 +569,19 @@ namespace PokaGoryu
                     }
                     break;
                 case GameState.Dead:
-                    if (GameInput.Down(GKey.R)) Respawn();
+                    if (GameInput.Down(GKey.R))
+                    {
+                        if (RunOver) newEndlessRequested = true;   // забег бесконечного режима закончен: R — начать новый
+                        else Respawn();
+                    }
                     break;   // кнопки «К очагу» и «В главное меню» — в MenuUI
                 case GameState.Victory:
                     WinFade = Mathf.MoveTowards(WinFade, 1f, dt * 0.35f);
-                    if (GameInput.Down(GKey.R)) Restart();
+                    if (GameInput.Down(GKey.R))
+                    {
+                        if (Endless) NextCity();
+                        else Restart();
+                    }
                     break;
             }
 
@@ -407,7 +603,7 @@ namespace PokaGoryu
             if (LowRes.Instance != null) LowRes.Instance.Glitch = Hero != null ? Mathf.Clamp01(Hero.DamageFlash * 1.6f) : 0f;
             UpdateDebugKeys();
 
-            bool lockCursor = !GameSmoke.Running && ((State == GameState.Playing && !Paused) || State == GameState.Intro);
+            bool lockCursor = !GameSmoke.Running && ((State == GameState.Playing && !Paused) || State == GameState.Intro || State == GameState.Ending);
             Cursor.lockState = lockCursor ? CursorLockMode.Locked : CursorLockMode.None;
             Cursor.visible = !lockCursor;
         }
@@ -421,13 +617,15 @@ namespace PokaGoryu
             if (GameInput.Down(GKey.F1)) DebugOverlay = !DebugOverlay;
             if (GameInput.Down(GKey.F3))
             {
+                Cheated = true;   // отладка: рекорд этого забега не засчитывается
                 Hero.SetLife(GameConfig.MaxLight, LightReason.Debug);
                 Notify("[debug] свет полон");
             }
-            if (GameInput.Down(GKey.F4)) DebugNextHearth();
-            if (GameInput.Down(GKey.F5)) DebugGoToStation();
+            if (GameInput.Down(GKey.F4)) { Cheated = true; DebugNextHearth(); }
+            if (GameInput.Down(GKey.F5)) { Cheated = true; DebugGoToStation(); }
             if (GameInput.Down(GKey.F6))
             {
+                Cheated = true;
                 Enemy.Spawn(EnemyKind.Shade, Player.transform.position + Player.transform.forward * 8f);
             }
         }

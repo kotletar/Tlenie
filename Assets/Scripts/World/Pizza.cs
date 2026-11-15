@@ -102,7 +102,7 @@ namespace PokaGoryu
                 if (groups[g] != null) groups[g].GetComponent<MeshRenderer>().sharedMaterial = dim;
             }
             PlayerController pl = PlayerController.Instance;
-            if (pl != null) ProcAudio.OneShot(pl.Sfx, "step", 0.55f, 1.7f);   // шорох картона
+            if (pl != null) ProcAudio.OneShot(pl.Sfx, "rustle", 0.55f, 1.7f);   // шорох картона
         }
 
         void Update()

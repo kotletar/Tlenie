@@ -192,6 +192,17 @@ namespace PokaGoryu
         public bool Active { get { return active; } }
         public float Elapsed { get { return t; } }
 
+        /// <summary>Кухня сцены (строится при первом обращении, пока скрыта): её же использует концовка, когда герой просыпается.</summary>
+        public Kitchen AcquireKitchen()
+        {
+            if (kitchen == null)
+            {
+                kitchen = Kitchen.Build(StageOrigin);
+                kitchen.Root.gameObject.SetActive(false);
+            }
+            return kitchen;
+        }
+
         // ------------------------------------------------------------------ запуск и завершение
 
         /// <summary>Начать предысторию. false — не удалось (тогда игра стартует сразу).</summary>

@@ -81,11 +81,17 @@ namespace PokaGoryu
         static readonly int[] Dx = { 1, -1, 0, 0 };
         static readonly int[] Dz = { 0, 0, 1, -1 };
 
+        /// <summary>
+        /// Зерно города: 0 — классика и первый город бесконечного режима (раскладка не меняется ни на байт), дальше города отличаются
+        /// лампами, реквизитом и декором (карта улиц та же). Задаёт GameManager перед BuildWorld.
+        /// </summary>
+        public static int CitySeed;
+
         public static void Build(Transform root)
         {
             CityMap.Build();
             rootT = root;
-            rng = new System.Random(20261114);
+            rng = new System.Random(20261114 + CitySeed * 7919);
 
             // меши прошлого мира (QuitToMenu, перезапуск): сами они со сценой не удаляются
             for (int i = 0; i < builtMeshes.Count; i++)
@@ -105,7 +111,7 @@ namespace PokaGoryu
             System.Array.Clear(BuildingHeight, 0, BuildingHeight.Length);
             grassS = new BatchSet(ChunkSize);
             signS = new BatchSet(ChunkSize);
-            drng = new System.Random(55117);
+            drng = new System.Random(55117 + CitySeed * 104729);
             entrances.Clear();
             shopSpots.Clear();
             grassTiles.Clear();
@@ -152,6 +158,7 @@ namespace PokaGoryu
             Flush(root);
             FixSurvivorSpots();
             BuildPizzas(root);
+            BuildVaults(root);   // самым последним и со своим генератором: остальной город не сдвигается
         }
 
         // ------------------------------------------------------------------ помощники
@@ -931,7 +938,8 @@ namespace PokaGoryu
                     }
                     if (near) continue;
                     placed.Add(pos);
-                    MakeLamp(root, pos, -wallDir, k, ref decoys);
+                    // клетка и все броски кубика — как были; сам столб при необходимости отодвигаем от угла (см. ClearLampSpot)
+                    MakeLamp(root, pos, ClearLampSpot(pos, -wallDir), -wallDir, k, ref decoys);
                 }
             }
 
@@ -959,9 +967,73 @@ namespace PokaGoryu
                     // (витрин на торцах тупиков нет, но дверь возможна: от её центра столб держим не ближе 1.5 м)
                     if (!LampSpot(x, z, wallDir, ((x + z) & 1) == 0 ? 1f : -1f, 2.1f, 1.5f, out pos)) pos = c + wallDir * (C * 0.5f - 0.8f);
                     placed.Add(pos);
-                    Lamp.Create(root, pos, -wallDir, 1f, false, false, false, DistrictTint(CityMap.District[x, z]));
+                    Lamp.Create(root, ClearLampSpot(pos, -wallDir), -wallDir, 1f, false, false, false, DistrictTint(CityMap.District[x, z]));
                 }
             }
+        }
+
+        /// <summary>
+        /// Хватает ли места столбу с кронштейном: у основания, у конца кронштейна и у плафона по обе стороны от оси (на lateral метров
+        /// вдоль стены) должна быть дорога. Иначе столб стоит в углу или у торца стены: плафон упирается в перпендикулярный фасад —
+        /// фонарь «в доме» и лежит вдоль стены (так было на скриншоте владельца). Для проверки расстановки (GameSmoke, стенд).
+        /// </summary>
+        public static bool LampHasRoom(Vector3 p, Vector3 armDir, float lateral)
+        {
+            Vector3 along = new Vector3(-armDir.z, 0f, armDir.x);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                for (int r = 0; r < 3; r++)
+                {
+                    float reach = r == 0 ? 0f : (r == 1 ? 1.2f : 1.6f);
+                    Vector3 q = p + armDir * reach + along * (lateral * side);
+                    if (!CityMap.IsRoad(q.x, q.z, false)) return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Витрина рядом: она 4.4 м шириной и твёрдая, столб не должен стоять у её края (ShopFronts — центры витрин у стены).</summary>
+        static bool NearShopFront(Vector3 p, float r)
+        {
+            float r2 = r * r;
+            for (int i = 0; i < ShopFronts.Count; i++)
+            {
+                float dx = ShopFronts[i].x - p.x;
+                float dz = ShopFronts[i].z - p.z;
+                if (dx * dx + dz * dz < r2) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Место для столба: выбранное (p0), если вокруг свободно (зазор 2.4 м до боковых стен, чтобы кронштейн не лежал вдоль
+        /// фасада); иначе ближайшее подходящее вдоль той же стены (шаг 0.4 м, обе стороны): дорога под ногами, стена продолжается,
+        /// не у двери и не у витрины. Если зазор 2.4 м найти нельзя (узкий тупик с дверью), довольствуемся 1.5, потом 1.0 и 0.8 м.
+        /// Совсем нет места — p0. Выбор клетки, расстояния между
+        /// лампами и броски кубика от этого не зависят: сдвигается только сам столб, лампы стоят в тех же клетках и на тех же стенах.
+        /// </summary>
+        static Vector3 ClearLampSpot(Vector3 p0, Vector3 armDir)
+        {
+            float[] levels = { 2.4f, 1.5f, 1.0f, 0.8f };
+            Vector3 along = new Vector3(-armDir.z, 0f, armDir.x);
+            Vector3 wallDir = -armDir;
+            for (int li = 0; li < levels.Length; li++)
+            {
+                if (LampHasRoom(p0, armDir, levels[li])) return p0;
+                for (int step = 1; step <= 16; step++)
+                {
+                    for (int side = -1; side <= 1; side += 2)
+                    {
+                        Vector3 p = p0 + along * (0.4f * step * side);
+                        if (!CityMap.IsRoad(p.x, p.z, false)) continue;
+                        if (CityMap.IsRoad(p.x + wallDir.x * 1.6f, p.z + wallDir.z * 1.6f, false)) continue;   // стена должна продолжаться
+                        if (NearEntrance(p, 1.5f) || NearShopFront(p, 2.7f)) continue;                         // не у двери и не у витрины
+                        if (!LampHasRoom(p, armDir, levels[li])) continue;
+                        return p;
+                    }
+                }
+            }
+            return p0;
         }
 
         /// <summary>
@@ -996,10 +1068,11 @@ namespace PokaGoryu
             return false;
         }
 
-        static void MakeLamp(Transform root, Vector3 pos, Vector3 armDir, byte kind, ref int decoys)
+        /// <summary>pos — клетка и расклад (от него зависят свойства лампы), spot — где столб стоит на самом деле (ClearLampSpot).</summary>
+        static void MakeLamp(Transform root, Vector3 pos, Vector3 spot, Vector3 armDir, byte kind, ref int decoys)
         {
             int d = CityMap.DistrictAt(pos.x, pos.z);
-            double r = rng.NextDouble();
+            double r = rng.NextDouble() + GameDifficulty.LampWearBonus;   // бесконечный город: дальше — больше потухших (в классике 0)
             float charge;
             bool unstable = false;
             bool decoy = false;
@@ -1018,7 +1091,7 @@ namespace PokaGoryu
                 unstable = false;
                 decoys++;
             }
-            Lamp.Create(root, pos, armDir, charge, unstable, decoy, false, DistrictTint(d));
+            Lamp.Create(root, spot, armDir, charge, unstable, decoy, false, DistrictTint(d));
         }
 
         static void BuildHearths(Transform root)

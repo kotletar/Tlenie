@@ -102,6 +102,7 @@ namespace PokaGoryu
                 if (Checkpoint == null || h.Progress > Checkpoint.Progress + 0.01f)
                 {
                     SetCheckpoint(h);
+                    gm.ControlHintsVisible = false;   // дошли до первого очага после старта: памятка по кнопкам внизу экрана больше не нужна
                     gm.Notify("Очаг: сюда вы вернётесь, если свет погаснет");
                 }
             }
@@ -173,6 +174,7 @@ namespace PokaGoryu
             float pressure = 1f + district * GameConfig.DistrictPressure + (TideActive ? GameConfig.TidePressure : 0f) + (FinalStand ? GameConfig.FinalPressure : 0f);
             int maxShades = GameConfig.ShadesBase + district * GameConfig.ShadesPerDistrict + (TideActive ? GameConfig.ShadesTide : 0) + (FinalStand ? GameConfig.ShadesFinal : 0);
             pressure *= GameDifficulty.PressureScale;
+            maxShades += GameDifficulty.ExtraShades;   // бесконечный город: дальше город — больше Теней одновременно
             if (InHearth && !FinalStand) pressure *= GameConfig.HearthPressure;
 
             spawnTimer -= dt;

@@ -77,12 +77,83 @@ namespace PokaGoryu
             k.BuildRoom();
             k.BuildLiveParts();
             k.BuildSkyline();
+            k.BuildWetParts();
             return k;
+        }
+
+        // ------------------------------------------------------------------ концовка: сон за столом и мокрый стул
+
+        /// <summary>Ноги, мокрое пятно, лужа, капли и пар — только для концовки (в предыстории скрыты).</summary>
+        public Transform WetRoot;
+        Mesh wetMesh;
+        Material puddleMat;
+        Material dripMat;
+        Material wetSteamMat;
+        Transform puddle;
+        readonly Transform[] drips = new Transform[3];
+        readonly Transform[] wetSteam = new Transform[4];
+
+        void BuildWetParts()
+        {
+            WetRoot = new GameObject("EndingWet").transform;
+            WetRoot.SetParent(Root, false);
+            WetRoot.localPosition = Vector3.zero;
+            MeshBatch b = new MeshBatch();
+            Color32 denim = C(52, 66, 98);
+            Color32 denimWet = C(26, 34, 60);
+            Color32 shoe = C(34, 30, 30);
+            for (int s = -1; s <= 1; s += 2)
+            {
+                b.BoxYaw(new Vector3(s * 0.13f, 0.52f, -0.30f), new Vector3(0.17f, 0.14f, 0.52f), 0f, denim, MeshBatch.AllFaces);    // бедро (под столом)
+                b.BoxYaw(new Vector3(s * 0.13f, 0.27f, -0.06f), new Vector3(0.13f, 0.50f, 0.14f), 0f, denim, MeshBatch.AllFaces);   // голень
+                b.BoxYaw(new Vector3(s * 0.13f, 0.035f, 0.02f), new Vector3(0.14f, 0.07f, 0.28f), 0f, shoe, MeshBatch.AllFaces);    // ботинок
+            }
+            b.BoxYaw(new Vector3(0f, 0.5925f, -0.42f), new Vector3(0.36f, 0.006f, 0.34f), 0f, denimWet, 4);    // мокрое пятно сверху
+            b.BoxYaw(new Vector3(-0.13f, 0.5925f, -0.22f), new Vector3(0.12f, 0.006f, 0.22f), 0f, denimWet, 4);
+            b.BoxYaw(new Vector3(0.13f, 0.5925f, -0.22f), new Vector3(0.12f, 0.006f, 0.22f), 0f, denimWet, 4);
+            wetMesh = b.Build("PG_KitchenLap");
+            Gfx.MeshObject(WetRoot, wetMesh, Gfx.Lit(Color.white), "Lap");
+
+            puddleMat = OwnedResources.Keep(Root.gameObject, Gfx.Unlit(new Color(0.88f, 0.78f, 0.22f, 0.5f), null, false, true, 0.1f));
+            puddle = Gfx.Prim(PrimitiveType.Cylinder, WetRoot, new Vector3(0f, 0.014f, -0.30f), new Vector3(0.9f, 0.002f, 0.8f), puddleMat, false).transform;
+            dripMat = OwnedResources.Keep(Root.gameObject, Gfx.Unlit(new Color(0.95f, 0.86f, 0.32f, 0.9f), Gfx.TexHalo, false, true, 0.05f));
+            for (int i = 0; i < drips.Length; i++) drips[i] = Gfx.Sprite(WetRoot, Vector3.zero, new Vector2(1f, 1f), dripMat, true).transform;
+            wetSteamMat = OwnedResources.Keep(Root.gameObject, Gfx.Unlit(new Color(0.96f, 0.95f, 0.86f, 0.12f), Gfx.TexHalo, true, false, 0f));
+            for (int i = 0; i < wetSteam.Length; i++) wetSteam[i] = Gfx.Sprite(WetRoot, Vector3.zero, new Vector2(1f, 1f), wetSteamMat, false).transform;
+            WetRoot.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// Мокрый стул: spread 0 — ничего нет (корень скрыт), 1 — лужа растеклась, с бедра капает и поднимается тёплый пар.
+        /// time — для капель и пара.
+        /// </summary>
+        public void SetWet(float spread, float time)
+        {
+            bool on = spread > 0.001f;
+            if (WetRoot.gameObject.activeSelf != on) WetRoot.gameObject.SetActive(on);
+            if (!on) return;
+            float s = Mathf.Clamp01(spread);
+            puddle.localScale = new Vector3(Mathf.Lerp(0.12f, 0.95f, s), 0.002f, Mathf.Lerp(0.10f, 0.80f, s));
+            puddleMat.SetColor("_Color", new Color(0.88f, 0.78f, 0.22f, 0.50f * Mathf.Min(1f, s * 4f)));
+            for (int i = 0; i < drips.Length; i++)
+            {
+                float ph = Mathf.Repeat(time * 1.15f + i * 0.37f, 1f);
+                drips[i].localPosition = new Vector3(-0.06f + i * 0.06f, Mathf.Lerp(0.52f, 0.02f, ph * ph), -0.30f - 0.03f * i);
+                drips[i].localScale = new Vector3(0.016f, 0.034f * Mathf.Sin(ph * Mathf.PI) * Mathf.Min(1f, s * 5f), 1f);
+            }
+            for (int i = 0; i < wetSteam.Length; i++)
+            {
+                float ph = Mathf.Repeat(time * 0.35f + i * 0.25f, 1f);
+                wetSteam[i].localPosition = new Vector3(-0.12f + i * 0.08f + 0.02f * Mathf.Sin(time + i * 2f), 0.62f + ph * 0.34f, -0.36f);
+                float sz = (0.10f + 0.12f * ph) * Mathf.Sin(Mathf.PI * ph) * Mathf.Min(1f, s * 3f);
+                wetSteam[i].localScale = new Vector3(sz, sz, 1f);
+            }
         }
 
         public void Destroy()
         {
             if (Root != null) Object.Destroy(Root.gameObject);
+            if (wetMesh != null) Object.Destroy(wetMesh);
             if (roomMesh != null) Object.Destroy(roomMesh);
             if (mugMesh != null) Object.Destroy(mugMesh);
             if (winMesh != null) Object.Destroy(winMesh);

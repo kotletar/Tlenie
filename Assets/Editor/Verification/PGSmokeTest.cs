@@ -144,6 +144,9 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "pizza") StepPizza(gm);
                 else if (scenario == "durable") StepDurable(gm);
                 else if (scenario == "layout") StepLayout(gm);
+                else if (scenario == "vault") StepVault(gm);
+                else if (scenario == "ending") StepEnding(gm, false);
+                else if (scenario == "endingshot") StepEnding(gm, true);
                 else if (scenario == "stats") StepStats(gm);
                 else if (scenario == "enemies") StepEnemies(gm);
                 else if (scenario == "close") StepClose(gm);
@@ -741,8 +744,42 @@ namespace PokaGoryu.EditorTools
                 case 260: Shoot("w06_dead"); break;
                 case 275: gm.State = GameState.Victory; gm.WinFade = 1f; break;
                 case 305: Shoot("w07_victory"); break;
-                case 330: Finish("OK", errors > 0 ? 2 : 0); break;
+
+                // таблица рекордов (образцы пишем в отдельный файл: настоящие рекорды не трогаем), экраны бесконечного города
+                case 320:
+                    RecordsStore.PathOverride = Path.Combine(outDir, "records_sample.txt");
+                    if (File.Exists(RecordsStore.PathOverride)) File.Delete(RecordsStore.PathOverride);
+                    RecordsStore.Forget();
+                    float[] secs = { 1021f, 1184f, 1305f, 1490f, 1722f };
+                    for (int i = 0; i < secs.Length; i++) RecordsStore.Submit(SampleRecord(RunRecords.Classic, 1, secs[i], 1, i, 9 - i));
+                    int[] cities = { 4, 3, 3, 1 };
+                    float[] ctimes = { 4100f, 3200f, 3550f, 900f };
+                    for (int i = 0; i < cities.Length; i++) RecordsStore.Submit(SampleRecord(RunRecords.Endless, 1, ctimes[i], cities[i], 2, 14 + i));
+                    gm.Endless = false;
+                    gm.State = GameState.Title;
+                    break;
+                case 330: SetMenuPage(gm, 4); break;
+                case 360: Shoot("w08_records_classic"); break;
+                case 370: typeof(MenuUI).GetField("recordsMode", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(gm.Menu, 1); break;
+                case 395: Shoot("w09_records_endless"); break;
+                case 405: SetMenuPage(gm, 0); gm.Endless = true; gm.City = 2; gm.ReturnsLeft = 4; gm.State = GameState.Victory; gm.WinFade = 1f; break;
+                case 435: Shoot("w10_endless_victory"); break;
+                case 445: gm.State = GameState.Dead; gm.ReturnsLeft = 2; gm.RunOver = false; break;
+                case 475: Shoot("w11_endless_dead"); break;
+                case 485: gm.ReturnsLeft = 0; gm.RunOver = true; gm.LastRecord = SampleRecord(RunRecords.Endless, 1, 3200f, 1, 2, 7); gm.LastRank = 2; break;
+                case 515: Shoot("w12_endless_over"); break;
+                case 525: gm.Endless = false; gm.RunOver = false; gm.State = GameState.Victory; gm.LastRecord = SampleRecord(RunRecords.Classic, 1, 990f, 1, 0, 10); gm.LastRank = 1; break;
+                case 555: Shoot("w13_victory_record"); break;
+                case 570: Finish("OK", errors > 0 ? 2 : 0); break;
             }
+        }
+
+        static RunRecord SampleRecord(int mode, int difficulty, float seconds, int cities, int returns, int saved)
+        {
+            RunRecord r = new RunRecord();
+            r.Mode = mode; r.Difficulty = difficulty; r.Seconds = seconds; r.Cities = cities; r.Returns = returns; r.Saved = saved;
+            r.Date = "2026-11-15";
+            return r;
         }
 
         // ------------------------------------------------------------------ предыстория, грудь, расстановка
@@ -1665,6 +1702,207 @@ namespace PokaGoryu.EditorTools
                 }
             }
             report.AppendLine("cars=" + cars + " lamps=" + lampsChecked + " crowded(<1.2 m)=" + lampsCrowded + " closest car edge to any lamp=" + closestCar.ToString("F2") + " m");
+
+            // фонарь целиком (основание, мачта, кронштейн, плафон) не должен задевать здания и прочее твёрдое
+            int lampInside = 0, lampHugging = 0, lampsTotal = 0, lampCramped = 0, lampTight = 0, lampSnug = 0;
+            for (int i = 0; i < Lamp.All.Count; i++)
+            {
+                Lamp l = Lamp.All[i];
+                if (l.IsHearth) continue;
+                lampsTotal++;
+                string inside = l.SolidContact(0f);
+                if (inside != null)
+                {
+                    lampInside++;
+                    report.AppendLine("lamp " + i + " at " + l.BasePos + " arm " + l.ArmDir + " is inside " + inside);
+                    continue;
+                }
+                string near = l.SolidContact(0.3f);
+                if (near != null && near != "TunnelRoof")   // фонари тоннеля висят у потолка: так задумано
+                {
+                    lampHugging++;
+                    report.AppendLine("lamp " + i + " at " + l.BasePos + " arm " + l.ArmDir + " hugs " + near + " (<0.3 m)");
+                }
+                if (!LevelBuilder.LampHasRoom(l.BasePos, l.ArmDir, 0.8f))
+                {
+                    lampCramped++;
+                    report.AppendLine("lamp " + i + " at " + l.BasePos + " arm " + l.ArmDir + " has less than 0.8 m to a side wall");
+                }
+                else if (!LevelBuilder.LampHasRoom(l.BasePos, l.ArmDir, 1.5f))
+                {
+                    lampTight++;
+                    report.AppendLine("lamp " + i + " at " + l.BasePos + " arm " + l.ArmDir + " has 0.8-1.5 m to a side wall");
+                }
+                else if (!LevelBuilder.LampHasRoom(l.BasePos, l.ArmDir, 2.4f))
+                {
+                    lampSnug++;
+                }
+            }
+            report.AppendLine("street lamps=" + lampsTotal + " inside solids=" + lampInside + " hugging solids(<0.3 m)=" + lampHugging
+                + " cramped(<0.8 m to a side wall)=" + lampCramped + " tight(0.8-1.5 m)=" + lampTight + " snug(1.5-2.4 m)=" + lampSnug);
+            string lampList = "";
+            for (int i = 0; i < Lamp.All.Count && i < 30; i++)
+                lampList += i + ":(" + Lamp.All[i].BasePos.x.ToString("F1") + "," + Lamp.All[i].BasePos.z.ToString("F1") + ")" + (Lamp.All[i].IsHearth ? "H" : "") + " ";
+            report.AppendLine("first lamps: " + lampList);
+
+            // хранилища света: сколько, где, решаются ли (трассировщик луча из места Stand при правильных зеркалах)
+            report.AppendLine("light vaults=" + LevelBuilder.Vaults.Count);
+            for (int i = 0; i < LevelBuilder.Vaults.Count; i++)
+            {
+                LightVault lv = LevelBuilder.Vaults[i];
+                string steps = "";
+                for (int k = 0; k < lv.Mirrors.Count; k++) steps += lv.Mirrors[k].Step + "->" + lv.Solution[k] + " ";
+                report.AppendLine("vault tier " + lv.Tier + " centre " + lv.Center + " gate " + lv.Gate + " stand " + lv.Stand + " mirrors " + steps
+                    + (lv.Lens != null ? "lens " : "") + "solvable=" + LevelBuilder.VaultSolvable(lv) + " sealHp=" + lv.Seal.Health);
+            }
+
+            System.Text.StringBuilder treeLog = new System.Text.StringBuilder();
+            int inTrees = LevelBuilder.FurnitureInTrees(treeLog);
+            report.Append(treeLog.ToString());
+            report.AppendLine("street furniture standing in tree trunks=" + inTrees);
+        }
+
+        /// <summary>
+        /// Хранилища света, по 260 кадров на каждое: кадр с места Stand при неверном зеркале, луч мимо печати, зеркала поставлены верно,
+        /// луч через зеркала и линзу в печать, печать горит и сгорает, вид на открытую каморку. Читает отчёт: здоровье печати по ходу.
+        /// </summary>
+        static void StepVault(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            if (frame == 3)
+            {
+                gm.State = GameState.Playing;
+                gm.Hero.Life = 100f;
+            }
+            if (frame < 5) return;
+            int vi = (frame - 5) / 260;
+            int ph = (frame - 5) % 260;
+            if (vi >= LevelBuilder.Vaults.Count)
+            {
+                if (ph == 0) Finish("OK", errors > 0 ? 2 : 0);
+                return;
+            }
+            LightVault lv = LevelBuilder.Vaults[vi];
+            gm.Hero.Life = 100f;
+            string tag = "v" + (vi + 1);
+            Vector3 toMirror = lv.StandAim - new Vector3(lv.Stand.x, lv.StandAim.y, lv.Stand.z);
+            toMirror.y = 0f;
+            float yaw = Mathf.Atan2(toMirror.x, toMirror.z) * Mathf.Rad2Deg;
+            if (ph == 0)
+            {
+                for (int k = 0; k < lv.Mirrors.Count; k++) lv.Mirrors[k].SetStep((lv.Solution[k] + 2) & 3);
+                pc.TeleportTo(lv.Stand, yaw);
+                SetPitch(pc, 0f);
+                report.AppendLine(tag + " tier " + lv.Tier + " sealHp=" + lv.Seal.Health + " solvable=" + LevelBuilder.VaultSolvable(lv));
+            }
+            if (ph == 8) Capture(tag + "_a_unsolved");
+            if (ph == 10)
+            {
+                pc.Combat.ForceHold = true;
+                pc.Combat.FireShot();
+            }
+            if (ph == 40)
+            {
+                Capture(tag + "_b_wrong_angle");
+                report.AppendLine(tag + " wrong mirror angle: sealHp=" + lv.Seal.Health + " bounces=" + BeamTrace.Bounces);
+            }
+            if (ph == 45) pc.Combat.ForceHold = false;
+            if (ph == 60) for (int k = 0; k < lv.Mirrors.Count; k++) lv.Mirrors[k].SetStep(lv.Solution[k]);
+            if (ph == 64)
+            {
+                pc.Combat.ForceHold = true;
+                pc.Combat.FireShot();
+            }
+            if (ph == 100)
+            {
+                Capture(tag + "_c_solved");
+                report.AppendLine(tag + " solved: sealHp=" + lv.Seal.Health.ToString("F0") + " bounces=" + BeamTrace.Bounces + " segs=" + BeamTrace.Count);
+            }
+            if (ph == 190) Capture(tag + "_d_burning");
+            if (ph == 235)
+            {
+                pc.Combat.ForceHold = false;
+                report.AppendLine(tag + " end: seal dead=" + lv.Seal.Dead + " orbs=" + LightOrb.All.Count);
+                Vector3 outward = lv.Gate - lv.Center;
+                outward.y = 0f;
+                outward.Normalize();
+                pc.TeleportTo(lv.Gate + outward * 4.5f, Mathf.Atan2(-outward.x, -outward.z) * Mathf.Rad2Deg);
+                SetPitch(pc, 12f);
+            }
+            if (ph == 250) Capture(tag + "_e_open");
+        }
+
+        /// <summary>
+        /// Концовка: кадры поездки в автобусе (салон, люди, рассвет, Тьма), пробуждение за кухонным столом (голова рядом с кружкой, а не в ней),
+        /// руки, мокрый стул. Времена — в секундах сценария; кухня начинается с EndingDirector.TKitchen. Перемотка DebugSeek, кадр через 8 кадров.
+        /// </summary>
+        static void StepEnding(GameManager gm, bool windowed)
+        {
+            float k0 = EndingDirector.TKitchen;
+            string[] names;
+            float[] times;
+            if (windowed)
+            {
+                // окно редактора: кадры с настоящими субтитрами, полосами и титулом (IMGUI), потом экран итога
+                names = new string[] { "s01_ride_caption", "s02_ride_flicker", "s03_ride_trap", "s04_kitchen_wake", "s05_kitchen_coffee", "s06_kitchen_warm", "s07_kitchen_wet", "s08_kitchen_saved", "s09_title" };
+                times = new float[] { 1.8f, 12.2f, 14.4f, k0 + 2.0f, k0 + 4.4f, k0 + 13.0f, k0 + 18.5f, k0 + 22.6f, k0 + 28.0f };
+            }
+            else
+            {
+                names = new string[]
+                {
+                    "e01_ride_start", "e02_ride_left", "e03_ride_back", "e04_ride_dawn", "e05_ride_flicker", "e06_ride_gate", "e07_ride_dark", "e08_ride_engulf",
+                    "e09_kitchen_sleep", "e10_kitchen_jolt", "e11_kitchen_rise", "e12_kitchen_window", "e13_kitchen_mug", "e14_kitchen_hands", "e15_kitchen_wet",
+                    "e16_kitchen_wet2", "e17_kitchen_forward"
+                };
+                times = new float[]
+                {
+                    0.9f, 3.4f, 4.8f, 7.4f, 10.2f, 12.4f, 13.7f, 14.6f,
+                    k0 + 0.6f, k0 + 1.4f, k0 + 2.0f, k0 + 2.9f, k0 + 4.6f, k0 + 7.6f, k0 + 10.8f,
+                    k0 + 13.4f, k0 + 17.5f
+                };
+            }
+            if (frame == 3)
+            {
+                gm.State = GameState.Playing;
+                gm.Hero.Life = 100f;
+            }
+            if (frame == 6)
+            {
+                if (Bus.Instance != null) Bus.Instance.BoardedCount = 6;
+                gm.Win();
+                report.AppendLine("after Win: state=" + gm.State + " ending active=" + gm.Ending.Active + " duration=" + gm.Ending.Duration.ToString("F1"));
+            }
+            if (frame < 10) return;
+            int slot = (frame - 10) / 16;
+            int phase = (frame - 10) % 16;
+            if (slot >= names.Length)
+            {
+                int rel = frame - (10 + names.Length * 16);
+                if (rel == 0)
+                {
+                    report.AppendLine("mug clearance=" + gm.Ending.MugClearance().ToString("F3") + " m, table clearance=" + gm.Ending.TableClearance().ToString("F3") + " m");
+                    if (!windowed) Finish("OK", errors > 0 ? 2 : 0);
+                    else gm.Ending.Skip();
+                }
+                if (windowed)
+                {
+                    if (rel == 220) Shoot("s10_result");
+                    if (rel == 240)
+                    {
+                        report.AppendLine("end state=" + gm.State + " winFade=" + gm.WinFade.ToString("F2"));
+                        Finish("OK", errors > 0 ? 2 : 0);
+                    }
+                }
+                return;
+            }
+            gm.Hero.Life = 100f;
+            if (phase == 0) gm.Ending.DebugSeek(times[slot]);
+            if (phase == 12)
+            {
+                if (windowed) Shoot(names[slot]);
+                else Capture(names[slot]);
+            }
         }
 
         static void Shoot(string name)

@@ -19,6 +19,10 @@ namespace PokaGoryu
         public float FinalLeft;
         public int BoardedCount;
 
+        /// <summary>true в концовке: автобус едет не сам, его ведёт режиссёр (EndingDirector).</summary>
+        public bool Scripted;
+        public Vector3 StartPos { get { return startPos; } }
+
         public bool CanFeed { get { return State == Mode.Idle; } }
         public Vector3 DoorPos { get { return startPos + new Vector3(-2.6f, 0f, 1.5f); } }
         public Vector3 FocusPoint { get { return DoorPos + Vector3.up * 1.3f; } }
@@ -130,11 +134,38 @@ namespace PokaGoryu
             State = Mode.Leaving;
             leaveT = 0f;
             GameManager gm = GameManager.Instance;
-            if (gm != null) gm.Notify("Автобус отправляется");
+            if (gm == null) return;
+            gm.Notify("Автобус отправляется");
+            // классика: все сели и автобус тронулся — начинается концовка (в бесконечном городе победа приходит через 3.6 с, как раньше)
+            if (!gm.Endless) gm.Win();
+        }
+
+        /// <summary>
+        /// Концовка: автобус снова у вокзала (людей он уже принял), дальше его ведёт режиссёр. Снаружи не нужны ни огни у фар,
+        /// ни шкала, ни кольцо у двери.
+        /// </summary>
+        public void BeginCinematic()
+        {
+            Scripted = true;
+            State = Mode.Leaving;
+            transform.position = startPos;
+            if (engine != null) AudioMix.SetVolume(engine, 0f);
+            if (ring != null) ring.gameObject.SetActive(false);
+            haloMat.SetColor("_Color", new Color(0.9f, 0.95f, 1f, 0f));
+            // Камера едет внутри: кузов с его гранями наружу изнутри не нужен (верх нижнего короба висел бы «вторым полом» на 1.6 м)
+            SetBodyVisible(false);
+        }
+
+        void SetBodyVisible(bool visible)
+        {
+            Renderer[] parts = GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < parts.Length; i++) parts[i].enabled = visible;
         }
 
         public void ResetToInitial()
         {
+            if (Scripted) SetBodyVisible(true);
+            Scripted = false;
             State = Mode.Idle;
             Charge = 0f;
             BoardedCount = 0;
@@ -153,6 +184,7 @@ namespace PokaGoryu
 
             if (State == Mode.Leaving)
             {
+                if (Scripted) return;
                 leaveT += dt;
                 transform.position += Vector3.forward * (leaveT * leaveT * 2.4f) * dt;
                 AudioMix.SetVolume(engine, 0.8f);
@@ -230,7 +262,7 @@ namespace PokaGoryu
                     if (Charge <= 0.01f) return 0f;
                     return 3f + 5f * Mathf.Clamp01(Charge / GameConfig.BusNeed);
                 }
-                return 22f;
+                return Scripted ? 10f : 22f;   // в концовке камера внутри: фары рядом с салоном были бы слишком яркими
             }
         }
 
@@ -239,7 +271,7 @@ namespace PokaGoryu
             get
             {
                 if (State == Mode.Idle) return 0.3f * Mathf.Clamp01(Charge / GameConfig.BusNeed);
-                return 1.4f;
+                return Scripted ? 0.35f : 1.4f;
             }
         }
 

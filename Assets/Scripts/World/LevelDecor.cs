@@ -515,6 +515,32 @@ namespace PokaGoryu
 
         // ------------------------------------------------------------------ уличная мебель
 
+        /// <summary>
+        /// Для проверки расстановки: сколько предметов уличной мебели (велостоянка, почтовый ящик, будка, автомат, киоск, тумба)
+        /// стоят в стволе дерева. Должно быть 0. Подробности — в log (если он не null).
+        /// </summary>
+        public static int FurnitureInTrees(System.Text.StringBuilder log)
+        {
+            Physics.SyncTransforms();
+            int bad = 0;
+            Collider[] cols = Object.FindObjectsByType<Collider>();
+            for (int i = 0; i < cols.Length; i++)
+            {
+                string n = cols[i].gameObject.name;
+                if (n != "BikeRack" && n != "Mailbox" && n != "PhoneBooth" && n != "Vending" && n != "Kiosk" && n != "Column") continue;
+                Bounds b = cols[i].bounds;
+                Collider[] hits = Physics.OverlapBox(b.center, b.extents, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
+                for (int k = 0; k < hits.Length; k++)
+                {
+                    if (hits[k].gameObject.name != "Tree") continue;
+                    bad++;
+                    if (log != null) log.AppendLine(n + " at " + b.center + " stands in a tree trunk at " + hits[k].bounds.center);
+                    break;
+                }
+            }
+            return bad;
+        }
+
         static void BuildStreetFurniture(Transform root)
         {
             float C = CityMap.Cell;
@@ -569,28 +595,35 @@ namespace PokaGoryu
                 float yaw = Mathf.Atan2(-wx, -wz) * Mathf.Rad2Deg;   // лицом от стены
                 double r = drng.NextDouble();
                 MeshBatch pb = propS.At(p);
+                // Мебель не стоит в стволе уличного дерева (деревья ставятся раньше). Счётчик и бросок кубика остаются, как были,
+                // поэтому остальная мебель города стоит там же, где стояла: пропадает только то, что было в дереве.
                 if (r < 0.22 && mail < 10)
                 {
                     mail++;
+                    if (NearTree(p, 1.0f)) continue;
                     Decor.Mailbox(pb, p, yaw);
                     Gfx.StaticBox(root, p + new Vector3(0f, 0.7f, 0f), new Vector3(0.7f, 1.4f, 0.5f), "Mailbox", yaw);
                 }
                 else if (r < 0.34 && phone < 6)
                 {
                     phone++;
+                    if (NearTree(p, 1.2f)) continue;
                     Decor.PhoneBooth(pb, p, yaw);
                     Gfx.StaticBox(root, p + new Vector3(0f, 1.15f, 0f), new Vector3(1.0f, 2.3f, 1.0f), "PhoneBooth", yaw);
                 }
                 else if (r < 0.52 && bikes < 8)
                 {
                     bikes++;
+                    if (NearTree(p, 1.8f)) continue;   // стойка 2 м шириной: ствол дерева в ней — баг
                     Decor.BikeRack(pb, p, yaw);
                     Gfx.StaticBox(root, p + new Vector3(0f, 0.4f, 0.2f), new Vector3(2.0f, 0.8f, 0.5f), "BikeRack", yaw);
                 }
                 else if (r < 0.62 && vend < 6)
                 {
                     vend++;
-                    Decor.Vending(pb, p, yaw, bodies[drng.Next(bodies.Length)]);
+                    Color32 vbody = bodies[drng.Next(bodies.Length)];
+                    if (NearTree(p, 1.2f)) continue;
+                    Decor.Vending(pb, p, yaw, vbody);
                     Gfx.StaticBox(root, p + new Vector3(0f, 0.9f, 0f), new Vector3(1.0f, 1.8f, 0.85f), "Vending", yaw);
                 }
                 else if (r < 0.74 && kiosks < 5 && k == CityMap.Plaza)

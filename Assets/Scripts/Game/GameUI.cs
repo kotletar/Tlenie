@@ -40,6 +40,7 @@ namespace PokaGoryu
         GUIStyle big;
         GUIStyle left;
         int lastFs = -1;
+        float controlHintsAlpha = 1f;   // строка с кнопками внизу экрана гаснет плавно, а не обрывается
 
         /// <summary>
         /// Метка в мире (вызывать каждый кадр, пока она нужна). Рисуется ТОЛЬКО когда игрок смотрит на объект (gaze — его центр,
@@ -105,6 +106,9 @@ namespace PokaGoryu
                 thoughts[0].Age += Time.unscaledDeltaTime;
                 if (thoughts[0].Age > ThoughtTime) thoughts.RemoveAt(0);
             }
+            // памятка по кнопкам гаснет за ~1,3 с, когда герой дошёл до первого очага; в новом забеге возвращается
+            float hintTarget = (gm == null || gm.ControlHintsVisible) ? 1f : 0f;
+            controlHintsAlpha = Mathf.MoveTowards(controlHintsAlpha, hintTarget, Time.unscaledDeltaTime * 0.8f);
         }
 
         void EnsureStyles()
@@ -236,9 +240,9 @@ namespace PokaGoryu
             }
             GUI.color = Color.white;
 
-            if (gm.State == GameState.Title || gm.State == GameState.Intro || (gm.State == GameState.Playing && gm.Paused))
+            if (gm.State == GameState.Title || gm.State == GameState.Intro || gm.State == GameState.Ending || (gm.State == GameState.Playing && gm.Paused))
             {
-                labels.Clear();   // главное меню и паузу рисует MenuUI, предысторию — IntroDirector; подсказки и сообщения под ними не нужны
+                labels.Clear();   // главное меню и паузу рисует MenuUI, предысторию и концовку — IntroDirector и EndingDirector; подсказки и сообщения под ними не нужны
                 return;
             }
 
@@ -285,6 +289,7 @@ namespace PokaGoryu
                 int total = Survivor.All.Count;
                 string stats = "Со мной: " + gm.AwakeSurvivors() + "    Разбужено: " + gm.SurvivorsWoken + " из " + total;
                 if (GuideWisp.CooldownLeft > 0.5f) stats += "\nПроводник: " + Mathf.CeilToInt(GuideWisp.CooldownLeft) + " с";
+                if (gm.Endless) stats = "Город " + gm.City + "    Возвращений к очагу: " + gm.ReturnsLeft + "\n" + stats;
                 Text(new Rect(w * 0.02f, h * 0.012f, w * 0.3f, h * 0.1f), stats, left, new Color(warm.r, warm.g, warm.b, 0.5f));
 
                 if (gm.Dir != null && gm.Dir.TideActive)
@@ -292,10 +297,11 @@ namespace PokaGoryu
                     Text(new Rect(0f, h * 0.10f, w, h * 0.08f), "ПРИЛИВ ТЬМЫ", mid, new Color(0.75f, 0.6f, 1f, 0.9f));
                 }
 
-                // Память о кнопках внизу экрана
-                Text(new Rect(w * 0.05f, h * 0.955f, w * 0.9f, h * 0.04f),
-                    "ЛКМ выстрел/луч   ПКМ вспышка   E вдох   F выдох   G Проводник   Q прикрыть   Tab посмотреть на себя   - / = яркость",
-                    tiny, new Color(warm.r, warm.g, warm.b, 0.4f));
+                // Память о кнопках внизу экрана: только до первого очага (GameManager.ControlHintsVisible), потом гаснет
+                if (controlHintsAlpha > 0.01f)
+                    Text(new Rect(w * 0.05f, h * 0.955f, w * 0.9f, h * 0.04f),
+                        "ЛКМ выстрел/луч   ПКМ вспышка   E вдох   F выдох   G Проводник   Q прикрыть   Tab посмотреть на себя   - / = яркость",
+                        tiny, new Color(warm.r, warm.g, warm.b, 0.4f * controlHintsAlpha));
 
                 if (gm.DebugOverlay)
                 {
@@ -336,8 +342,17 @@ namespace PokaGoryu
                 GUI.color = new Color(0f, 0f, 0f, 0.65f);
                 GUI.DrawTexture(full, Texture2D.whiteTexture);
                 GUI.color = Color.white;
-                Text(new Rect(0f, h * 0.34f, w, h * 0.14f), "СВЕТ ПОГАС", big, new Color(1f, 0.5f, 0.3f, 1f));
-                Text(new Rect(0f, h * 0.52f, w, h * 0.06f), "Тьма взяла своё. Очаг ещё горит: вернись к нему.", mid, warm);
+                Text(new Rect(0f, h * 0.34f, w, h * 0.14f), gm.RunOver ? "СВЕТ ПОГАС НАВСЕГДА" : "СВЕТ ПОГАС", big, new Color(1f, 0.5f, 0.3f, 1f));
+                if (gm.Endless && gm.RunOver)
+                {
+                    int cleared = gm.CitiesCleared;
+                    Text(new Rect(0f, h * 0.50f, w, h * 0.06f), "Бесконечный город: пройдено городов — " + cleared + ", время " + RunRecords.Clock(gm.PlayTime), mid, warm);
+                    Text(new Rect(0f, h * 0.57f, w, h * 0.05f), RankLine(gm), small, warm);
+                }
+                else if (gm.Endless)
+                    Text(new Rect(0f, h * 0.52f, w, h * 0.06f), "Тьма взяла своё. Очаг ещё горит. Возвращений осталось: " + gm.ReturnsLeft, mid, warm);
+                else
+                    Text(new Rect(0f, h * 0.52f, w, h * 0.06f), "Тьма взяла своё. Очаг ещё горит: вернись к нему.", mid, warm);
             }
             else if (gm.State == GameState.Victory)
             {
@@ -358,22 +373,48 @@ namespace PokaGoryu
             int boarded = Bus.Instance != null ? Bus.Instance.BoardedCount : 0;
             int total = Survivor.All.Count;
             string verdict;
-            if (boarded == 0) verdict = "Ты уехал один. Свет остался только в тебе.";
-            else if (boarded * 2 < total) verdict = "Автобус уехал. Не все огоньки дошли.";
-            else if (boarded < total) verdict = "Почти все добрались. За городом уже рассвет.";
-            else verdict = "Все огоньки спасены. За городом уже рассвет.";
+            if (gm.Endless)
+            {
+                if (boarded == 0) verdict = "Ты уехал один. Свет остался только в тебе.";
+                else if (boarded * 2 < total) verdict = "Автобус уехал. Не все огоньки дошли.";
+                else if (boarded < total) verdict = "Почти все добрались. За городом уже рассвет.";
+                else verdict = "Все огоньки спасены. За городом уже рассвет.";
+            }
+            else
+            {
+                // классика: после ловушки герой просыпается за кухонным столом, и всё случилось только во сне
+                if (boarded == 0) verdict = "Во сне ты выбрался один. Наяву — только мокрые штаны.";
+                else if (boarded * 2 < total) verdict = "Во сне ты спас не всех. Наяву — только мокрые штаны.";
+                else if (boarded < total) verdict = "Во сне ты спас почти всех. Наяву — только мокрые штаны.";
+                else verdict = "Во сне ты спас всех. Наяву — только мокрые штаны.";
+            }
             int lamps = gm.LampsLeft();
             string city = lamps >= 14 ? "В городе ещё горят огни: он может загореться снова." : "Город погас. Огней почти не осталось.";
 
-            Text(new Rect(0f, h * 0.18f, w, h * 0.14f), "АВТОБУС УЕХАЛ", big, ink);
+            string title = gm.Endless ? "ГОРОД " + gm.City + " ПРОЙДЕН" : "ВСЁ БЫЛО СНОМ";
+            string tail = gm.Endless
+                ? "Время забега: " + Clock(gm.PlayTime) + "    Возвращений к очагу: " + gm.Deaths + " (осталось " + gm.ReturnsLeft + ")\n"
+                  + "Следующий город темнее: больше Теней, быстрее тает свет, больше погасших ламп."
+                : "Время: " + Clock(gm.PlayTime) + "    Возвращений к очагу: " + gm.Deaths + "\n" + RankLine(gm);
+            string stats = gm.Endless
+                ? "Спасено: " + boarded + " из " + total + "\n" + "Огней осталось городу: " + lamps + "\n" + city + "\n" + tail
+                : "Спасено во сне: " + boarded + " из " + total + "\n" + tail;
+            Text(new Rect(0f, h * 0.18f, w, h * 0.14f), title, big, ink);
             Text(new Rect(w * 0.1f, h * 0.36f, w * 0.8f, h * 0.08f), verdict, mid, ink);
-            Text(new Rect(w * 0.1f, h * 0.46f, w * 0.8f, h * 0.18f),
-                "Спасено: " + boarded + " из " + total + "\n" +
-                "Огней осталось городу: " + lamps + "\n" +
-                city + "\n" +
-                "Время: " + Clock(gm.PlayTime) + "    Возвращений к очагу: " + gm.Deaths,
-                small, ink);
+            Text(new Rect(w * 0.1f, h * 0.46f, w * 0.8f, h * 0.2f), stats, small, ink);
             textShadow = true;
+        }
+
+        /// <summary>Строка про таблицу рекордов под итогом забега: место, «новый рекорд» или почему не засчитано.</summary>
+        string RankLine(GameManager gm)
+        {
+            if (gm.Cheated) return "Рекорд не засчитан: использовались отладочные клавиши.";
+            if (!gm.RunCounts) return "Рекорд не засчитан: сложность меняли во время забега.";
+            if (gm.LastRecord == null) return "";
+            if (gm.LastRank == 1) return "НОВЫЙ РЕКОРД! Первое место в таблице.";
+            if (gm.LastRank > 1) return "Таблица рекордов: место " + gm.LastRank + " из " + RunRecords.Keep + ".";
+            if (gm.Endless && gm.CitiesCleared < 1) return "Ни одного города не пройдено: в таблицу не попало.";
+            return "В десятку лучших не вошло.";
         }
     }
 }

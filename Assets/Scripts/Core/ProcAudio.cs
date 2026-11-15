@@ -79,7 +79,9 @@ namespace PokaGoryu
                 case "win": return Win();
                 case "eater": return Eater();
                 case "shade": return ShadeWhisper();
-                case "step": return Step();
+                case "step": return Footstep(0);
+                case "step2": return Footstep(1);
+                case "rustle": return Rustle();
                 case "engine": return Engine();
                 case "orb": return Orb();
                 case "munch": return Munch();
@@ -90,8 +92,27 @@ namespace PokaGoryu
                 case "rumble": return Rumble();
                 case "sizzle": return Sizzle();
                 case "swell": return Swell();
+                // концовка (кухня)
+                case "drip": return Drip();
             }
             return Make("silence", new float[Rate / 10]);
+        }
+
+        /// <summary>Капля: тон быстро падает, следом тихий всплеск. Для концовки, где с бедра капает на пол.</summary>
+        static AudioClip Drip()
+        {
+            float[] d = Buf(0.42f);
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float f = 520f + 420f * Mathf.Exp(-t * 34f);
+                float s = Mathf.Sin(TwoPi * f * t) * Mathf.Exp(-t * 21f);
+                float t2 = t - 0.12f;
+                if (t2 > 0f) s += 0.32f * Mathf.Sin(TwoPi * (430f + 220f * Mathf.Exp(-t2 * 30f)) * t2) * Mathf.Exp(-t2 * 25f);
+                float click = t < 0.004f ? 0.4f * (1f - t / 0.004f) : 0f;
+                d[i] = 0.75f * s + click;
+            }
+            return Make("drip", d);
         }
 
         static float[] Buf(float seconds)
@@ -369,7 +390,8 @@ namespace PokaGoryu
             return Make("eater", d);
         }
 
-        static AudioClip Step()
+        // Шорох картона (пицца): короткий мягкий шум. Раньше точно таким же звуком звучали и шаги героя.
+        static AudioClip Rustle()
         {
             float[] d = Buf(0.14f);
             System.Random r = new System.Random(21);
@@ -380,7 +402,41 @@ namespace PokaGoryu
                 y += (Noise(r) - y) * 0.25f;
                 d[i] = y * Mathf.Exp(-t * 38f) * 1.4f;
             }
-            return Make("step", d);
+            return Make("rustle", d);
+        }
+
+        // Шаг по асфальту в тихом городе: «пятка — носок». Глухой удар каблука (тон падает, есть вторая гармоника), «тук» подошвы
+        // по асфальту (~450 Гц, его слышно и на маленьких динамиках, где басовый удар пропадает), сухой щелчок, шорох подошвы
+        // и через 65 мс тише и выше — носок. Два варианта (левая и правая нога): чуть разный тон и разный шум. Оба выровнены по
+        // пику, громкость задаёт вызывающий (PlayerController). Энергия: ~половина ниже 300 Гц, остальное — середина спектра.
+        static AudioClip Footstep(int variant)
+        {
+            float[] d = Buf(0.22f);
+            System.Random r = new System.Random(variant == 0 ? 211 : 509);
+            float f0 = variant == 0 ? 150f : 128f;   // тон удара каблука, Гц
+            float fk = variant == 0 ? 480f : 430f;   // «тук» подошвы, Гц
+            float low = 0f, mid = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float n = Noise(r);
+                low += (n - low) * 0.10f;           // ~350 Гц
+                mid += (n - mid) * 0.42f;           // ~1,9 кГц
+                float band = mid - low;             // полоса 350–1900 Гц: щелчок и шорох подошвы
+                float fHeel = f0 * (1f + 0.40f * Mathf.Exp(-t * 70f));
+                float heel = (Mathf.Sin(TwoPi * fHeel * t) + 0.5f * Mathf.Sin(TwoPi * 2f * fHeel * t)) * Mathf.Exp(-t * 52f);
+                float knock = Mathf.Sin(TwoPi * fk * t) * Mathf.Exp(-t * 90f);
+                float click = band * Mathf.Exp(-t * 300f);
+                float scuff = band * Mathf.Clamp01(t / 0.006f) * Mathf.Exp(-t * 20f);
+                float tt = t - 0.065f;
+                float toe = tt > 0f ? (0.35f * Mathf.Sin(TwoPi * f0 * 1.4f * tt) + 0.6f * band) * Mathf.Exp(-tt * 80f) : 0f;
+                d[i] = 0.55f * heel + 0.45f * knock + 1.3f * click + 0.5f * scuff + 0.9f * toe;
+            }
+            float peak = 0f;
+            for (int i = 0; i < d.Length; i++) peak = Mathf.Max(peak, Mathf.Abs(d[i]));
+            if (peak > 0.001f)
+                for (int i = 0; i < d.Length; i++) d[i] *= 0.85f / peak;
+            return Make(variant == 0 ? "step" : "step2", d);
         }
 
         static AudioClip Engine()

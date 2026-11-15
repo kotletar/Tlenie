@@ -11,6 +11,13 @@ public static class CoreChecks
         if (!ok) throw new Exception("FAIL " + label);
     }
     static Pt Center(CellPos p) { return CityMap.CenterOf(p.X, p.Z); }
+    static RunRecord Rec(int mode, int difficulty, float seconds, int cities, int returns, int saved)
+    {
+        RunRecord r = new RunRecord();
+        r.Mode = mode; r.Difficulty = difficulty; r.Seconds = seconds; r.Cities = cities; r.Returns = returns; r.Saved = saved;
+        r.Date = "2026-11-15";
+        return r;
+    }
     static void Landmarks(List<CellPos> items, string name, Pt start)
     {
         foreach (CellPos p in items)
@@ -84,6 +91,44 @@ public static class CoreChecks
             Assert(GameConfig.SmolderPerSec == 0.24f && GameConfig.BusNeed == 60 && GameConfig.PizzaLight == 24,
                 "live balance reset restores baseline");
             GameDifficulty.Mode = Challenge.Standard;
+
+            // Бесконечный город: первый город равен классике, дальше темнее
+            GameDifficulty.City = 1;
+            Assert(GameDifficulty.PressureScale == 1 && GameDifficulty.DrainScale == 1 && GameDifficulty.ExtraShades == 0
+                && GameDifficulty.LampWearBonus == 0, "first endless city equals the classic balance");
+            GameDifficulty.City = 5;
+            Assert(Math.Abs(GameDifficulty.PressureScale - 1.6f) < 0.001f && Math.Abs(GameDifficulty.DrainScale - 1.12f) < 0.001f
+                && GameDifficulty.ExtraShades == 2 && Math.Abs(GameDifficulty.LampWearBonus - 0.12) < 1e-9, "city 5 is darker and more dangerous");
+            GameDifficulty.City = 100;
+            Assert(GameDifficulty.LampWearBonus == 0.2, "lamp wear is capped");
+            GameDifficulty.City = 1;
+
+            // Таблица рекордов
+            RunRecords t = new RunRecords();
+            Assert(t.Submit(Rec(0, 1, 900f, 1, 1, 7)) == 1, "first record is first place");
+            Assert(t.Submit(Rec(0, 1, 700f, 1, 3, 9)) == 1, "a faster classic run takes first place");
+            Assert(t.Submit(Rec(0, 1, 800f, 1, 0, 9)) == 2, "a middle classic run is second");
+            Assert(t.Submit(Rec(0, 1, 700f, 1, 1, 9)) == 1, "equal time: fewer returns to the hearth ranks higher");
+            Assert(t.Submit(Rec(0, 2, 5000f, 1, 0, 2)) == 1, "every difficulty has its own table");
+            Assert(t.Submit(Rec(1, 1, 3000f, 0, 0, 0)) == 0, "an endless run without a finished city is not recorded");
+            Assert(t.Submit(Rec(1, 1, 3000f, 3, 5, 20)) == 1 && t.Submit(Rec(1, 1, 3500f, 3, 5, 20)) == 2
+                && t.Submit(Rec(1, 1, 9000f, 4, 5, 20)) == 1, "endless: more cities first, then the faster run");
+            RunRecords full = new RunRecords();
+            for (int i = 0; i < 12; i++) full.Submit(Rec(0, 1, 1000f + i, 1, 0, 5));
+            Assert(full.Top(0, 1).Count == RunRecords.Keep && Math.Abs(full.Top(0, 1)[RunRecords.Keep - 1].Seconds - 1009f) < 0.01f,
+                "only the best ten are kept");
+            Assert(full.Submit(Rec(0, 1, 5000f, 1, 0, 5)) == 0 && full.Count == RunRecords.Keep, "a slow run outside the top ten is dropped");
+            RunRecords back = RunRecords.Parse(t.Serialize());
+            Assert(back.Count == t.Count, "records survive a save and load");
+            List<RunRecord> was = t.Top(0, 1), now = back.Top(0, 1);
+            bool same = was.Count == now.Count;
+            for (int i = 0; same && i < was.Count; i++)
+                same = Math.Abs(was[i].Seconds - now[i].Seconds) < 0.06f && was[i].Returns == now[i].Returns && was[i].Saved == now[i].Saved && was[i].Date == now[i].Date;
+            Assert(same, "order and fields are preserved");
+            Assert(RunRecords.Parse("garbage\n1;2;x;4;5;6;d\n0;1;-5;1;0;0;d\n9;9;1;1;1;1;d\n0;1;NaN;1;0;0;d").Count == 0, "damaged lines are skipped");
+            Assert(RunRecords.Parse(null).Count == 0 && RunRecords.Parse("").Count == 0, "an empty file is an empty table");
+            Assert(RunRecords.Clock(65f) == "1:05" && RunRecords.Clock(3725f) == "1:02:05" && RunRecords.Clock(-3f) == "0:00", "clock format");
+
             Console.WriteLine("CORE CHECKS: OK; " + checks + " assertions, " + roads + " road cells");
             return 0;
         }

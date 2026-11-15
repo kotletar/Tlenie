@@ -37,6 +37,10 @@ namespace PokaGoryu
             if (i >= 0 && i + 1 < args.Length) output = Path.GetFullPath(args[i + 1]);
             Directory.CreateDirectory(output);
             OutputDirectory = output;
+            // Records of this scenario live next to its report: the player's own table is never touched or filled with test runs.
+            RecordsStore.PathOverride = Path.Combine(output, "records.txt");
+            if (File.Exists(RecordsStore.PathOverride)) File.Delete(RecordsStore.PathOverride);
+            RecordsStore.Forget();
             Application.runInBackground = true;
             // Keep the scenario reproducible without changing saved user preferences.
             GameSettings.Difficulty = Challenge.Standard;
@@ -56,7 +60,7 @@ namespace PokaGoryu
         }
         void Update()
         {
-            if (!finished && Time.realtimeSinceStartup - began > 120f)
+            if (!finished && Time.realtimeSinceStartup - began > 170f)
             { Check(false, "timeout"); Finish(); }
         }
         void Check(bool condition, string message)
@@ -98,6 +102,18 @@ namespace PokaGoryu
             input.LookOnce(new Vector2(0f, -pitch / gm.Player.MouseSens * (GameSettings.InvertY ? -1f : 1f)));
         }
 
+        /// <summary>Встать в точку stand (на земле) и смотреть в точку aim: поворот по горизонтали сразу, наклон головы — следующим кадром.</summary>
+        void FaceFrom(Vector3 stand, Vector3 aim)
+        {
+            stand.y = 0.1f;
+            Vector3 toward = aim - stand;
+            float yaw = Mathf.Atan2(toward.x, toward.z) * Mathf.Rad2Deg;
+            gm.Player.TeleportTo(stand, yaw);
+            Vector3 look = aim - gm.Player.Cam.transform.position;
+            float pitch = -Mathf.Atan2(look.y, new Vector2(look.x, look.z).magnitude) * Mathf.Rad2Deg;
+            input.LookOnce(new Vector2(0f, -pitch / gm.Player.MouseSens * (GameSettings.InvertY ? -1f : 1f)));
+        }
+
         IEnumerator Start()
         {
             if (Array.IndexOf(Environment.GetCommandLineArgs(), "-pg-ai") >= 0)
@@ -111,6 +127,17 @@ namespace PokaGoryu
             Check(gm.State == GameState.Title && FindMusic().Length == 4, "title and four music stems");
             Check(LevelBuilder.PizzasPlaced == 8 && LevelBuilder.PizzasMissed == 0 && Survivor.All.Count == 10,
                 "golden layout: 8 pizzas, 10 survivors");
+            // фонари не лезут в здания и не лежат вдоль фасада в углу; уличная мебель не стоит в стволах деревьев
+            Physics.SyncTransforms();
+            int lampsInSolids = 0, lampsCramped = 0;
+            foreach (Lamp l in Lamp.All)
+            {
+                if (l.IsHearth) continue;
+                if (l.SolidContact(0f) != null) lampsInSolids++;
+                else if (!LevelBuilder.LampHasRoom(l.BasePos, l.ArmDir, 0.8f)) lampsCramped++;
+            }
+            Check(lampsInSolids == 0 && lampsCramped == 0, "street lamps stand clear of buildings: inside " + lampsInSolids + ", cramped " + lampsCramped);
+            Check(LevelBuilder.FurnitureInTrees(null) == 0, "street furniture never stands in a tree trunk");
             yield return Key(GKey.Enter);
             yield return new WaitForSecondsRealtime(1.2f);
             Check(gm.State == GameState.Intro, "Enter starts intro through menu input");
@@ -199,6 +226,18 @@ namespace PokaGoryu
             Check(Vector3.Distance(before, gm.Player.transform.position) > 1f, "W moves through native character controller");
             yield return new WaitForSecondsRealtime(0.2f);
 
+            // Шаги привязаны к качанию головы: при ходьбе 4,2 м/с это ~7,6 шага за 3 с (раньше таймер давал ~5,8).
+            System.Reflection.FieldInfo footField = typeof(PlayerController).GetField("lastFoot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            gm.Player.TeleportTo(LevelBuilder.StartPos, 0f);
+            yield return null;
+            int foot0 = (int)footField.GetValue(gm.Player);
+            input.Key(GKey.W, true);
+            yield return new WaitForSecondsRealtime(3f);
+            input.Key(GKey.W, false);
+            int footSteps = (int)footField.GetValue(gm.Player) - foot0;
+            Check(footSteps >= 6 && footSteps <= 9, "footsteps follow the head bob: " + footSteps + " steps in 3 s of walking");
+            yield return new WaitForSecondsRealtime(0.2f);
+
             Growth wall = Growth.All[0];
             Vector3 target = wall.Center + Vector3.up * 2f;
             Approach(target, 8f);
@@ -215,6 +254,69 @@ namespace PokaGoryu
             input.Mouse(1, false);
             yield return new WaitForSecondsRealtime(0.6f);
             Check(gm.Economy.Amount(LightReason.Flash, false, false) >= 19.9, "RMB flash uses its own expense category");
+
+            // Хранилища света: печать не берёт прямой свет, зеркало поворачивается на E, отражённый луч сжигает печать, внутри свет.
+            bool allSolvable = LevelBuilder.Vaults.Count == 3;
+            foreach (LightVault lv in LevelBuilder.Vaults) allSolvable &= LevelBuilder.VaultSolvable(lv);
+            Check(allSolvable, "three light vaults exist and every one is solvable by the real beam trace");
+            LightVault vault = LevelBuilder.Vaults.Count > 0 ? LevelBuilder.Vaults[0] : null;
+            if (vault != null)
+            {
+                Enemy.ClearAll();
+                gm.Hero.SetLife(100f, LightReason.Debug);
+                Vector3 outward = vault.Gate - vault.Center;
+                outward.y = 0f;
+                outward.Normalize();
+                FaceFrom(vault.Gate + outward * 6f, vault.Seal.Center + Vector3.up * 1.6f);
+                yield return new WaitForSecondsRealtime(0.3f);
+                input.Mouse(0, true);
+                yield return new WaitForSecondsRealtime(1.5f);
+                input.Mouse(0, false);
+                yield return new WaitForSecondsRealtime(0.3f);
+                Check(!vault.Seal.Dead && vault.Seal.Health >= vault.Seal.MaxHealth - 0.01f, "darkness seal ignores direct light");
+
+                LightOptic mirror = vault.Mirrors[0];
+                Vector3 toMirror = mirror.transform.position - vault.Stand;
+                toMirror.y = 0f;
+                toMirror.Normalize();
+                FaceFrom(mirror.transform.position - toMirror * 2f, mirror.FocusPoint);
+                yield return new WaitForSecondsRealtime(0.3f);
+                Check(gm.Player.FocusType == FocusKind.Optic, "gaze selects the mirror");
+                int presses = (vault.Solution[0] - mirror.Step + 4) & 3;
+                for (int i = 0; i < presses; i++)
+                {
+                    yield return Key(GKey.E);
+                    yield return null;
+                }
+                Check(presses > 0 && mirror.Step == vault.Solution[0], "E turns the mirror to the solution (" + presses + " presses)");
+
+                gm.Hero.SetLife(100f, LightReason.Debug);
+                FaceFrom(vault.Stand, vault.StandAim);
+                yield return new WaitForSecondsRealtime(0.3f);
+                input.Mouse(0, true);
+                yield return new WaitForSecondsRealtime(4.5f);
+                input.Mouse(0, false);
+                yield return new WaitForSecondsRealtime(0.4f);
+                int freed = 0;
+                foreach (LightOrb orb in LightOrb.All)
+                    if (!orb.Collected && Vector3.Distance(orb.transform.position, vault.Center) < 3f) freed++;
+                Check(vault.Seal.Dead && freed >= 3, "a reflected beam burns the seal and frees the light inside (" + freed + " shards)");
+
+                // Печать хранилища — не стена на дороге: цель дня про неё молчит; открытое хранилище остаётся открытым.
+                vault.Seal.ResetToInitial();
+                Check(vault.Seal.Dead, "an opened vault stays open when the walls regrow after dying");
+                if (LevelBuilder.Vaults.Count > 1)
+                {
+                    LightVault other = LevelBuilder.Vaults[1];
+                    Vector3 away = other.Gate - other.Center;
+                    away.y = 0f;
+                    gm.Player.TeleportTo(other.Gate + away.normalized * 5f + Vector3.up * 0.1f, 0f);
+                    bool nearWall = false;
+                    foreach (Growth g in Growth.All)
+                        if (!g.Sealed && !g.Dead && Vector3.Distance(g.Center, gm.Player.transform.position) < 30f) nearWall = true;
+                    if (!nearWall) Check(!gm.ObjectiveText().Contains("стена Тьмы"), "a vault seal is not announced as a wall blocking the road");
+                }
+            }
 
             yield return Key(GKey.Esc);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -254,11 +356,35 @@ namespace PokaGoryu
             Check(gm.State == GameState.Playing && gm.Hero.Life > 50f && gm.Economy.Amount(LightReason.Respawn, true, false) > 0,
                 "R respawns and accounts for restored light");
             Check(Math.Abs(gm.Economy.ExpectedLight - gm.Hero.Life) < 0.01, "ledger reconciles after respawn");
-            gm.Win();
-            yield return new WaitForSecondsRealtime(2.8f);
-            Check(gm.State == GameState.Victory && FindMusic()[0].volume < 0.001f, "victory fades score");
+            // Настоящий путь: автобус заведён светом и тронулся (Bus.Leave) — классика начинает концовку: автобус везёт героя и людей,
+            // это ловушка, Тьма, герой просыпается за кухонным столом.
+            Bus.Instance.Feed(GameConfig.BusNeed + 1f);
+            Bus.Instance.FinalLeft = 0.05f;
+            yield return new WaitForSecondsRealtime(1.2f);
+            Check(gm.State == GameState.Ending && gm.Ending.Active && Bus.Instance.Scripted, "the bus leaving with the people starts the ending");
+            Vector3 busSeat = Bus.Instance.transform.position + RideStage.SeatEye;
+            Check(Vector3.Distance(gm.Player.Cam.transform.position, busSeat) < 0.6f && Bus.Instance.transform.position.z > Bus.Instance.StartPos.z,
+                "ending: the camera rides inside the moving bus");
+            gm.Ending.DebugSeek(EndingDirector.TOpen + 1.5f);
+            yield return new WaitForSecondsRealtime(0.3f);
+            Check(gm.Ending.DarknessVisible, "ending: the dawn ahead turns out to be the Darkness");
+            gm.Ending.DebugSeek(EndingDirector.TKitchen + 0.5f);
+            yield return new WaitForSecondsRealtime(0.4f);
+            Vector3 kitchenSeat = gm.Intro.AcquireKitchen().World(Kitchen.SeatRoot);
+            Check(Vector3.Distance(gm.Player.transform.position, kitchenSeat) < 0.05f && gm.Intro.AcquireKitchen().Root.gameObject.activeSelf,
+                "ending: the hero wakes up at the kitchen table");
+            Check(gm.Ending.MugClearance() > 0.12f && gm.Ending.TableClearance() > 0.1f,
+                "ending: the sleeping head rests beside the coffee mug, never in it (clearance " + gm.Ending.MugClearance().ToString("0.00") + " m)");
+            yield return Key(GKey.Space);
+            yield return new WaitForSecondsRealtime(1.0f);
+            Check(gm.State == GameState.Victory && !gm.Ending.Active && !gm.Intro.AcquireKitchen().Root.gameObject.activeSelf, "Space skips the ending to the result screen");
+            yield return new WaitForSecondsRealtime(2.8f);   // экран итога проявляется ~2.6 с, до этого кнопки не принимают ввод
+            Check(FindMusic()[0].volume < 0.001f, "victory fades score");
             string csvPath = Path.Combine(output, "last-run-light.csv");
             Check(File.Exists(csvPath) && File.ReadAllText(csvPath).Contains("Beam"), "local report includes per-action light transfers");
+            Check(gm.LastRecord != null && gm.LastRank == 1 && File.Exists(RecordsStore.FilePath)
+                && RecordsStore.Table.Top(RunRecords.Classic, (int)Challenge.Standard).Count == 1,
+                "classic victory goes into the records table (first place, file written)");
             yield return Key(GKey.Down);
             yield return Key(GKey.Down);
             yield return Key(GKey.Enter);
@@ -294,6 +420,85 @@ namespace PokaGoryu
             yield return null; yield return null;
             int afterOrbs = Resources.FindObjectsOfTypeAll<Material>().Length;
             Check(afterOrbs <= beforeOrbs, "50 discarded orbs release 100 native materials: " + beforeOrbs + " -> " + afterOrbs);
+
+            // Подсказки: строка с кнопками живёт до первого очага после старта, подсказка про Проводника — до его ручного вызова.
+            yield return Key(GKey.Enter);
+            yield return new WaitForSecondsRealtime(1.2f);
+            yield return Key(GKey.Space);
+            yield return new WaitForSecondsRealtime(3f);   // автовызов Проводника — через 2 с после старта
+            Check(gm.State == GameState.Playing && gm.ControlHintsVisible, "new run shows the control hints strip");
+            Check(GuideWisp.CooldownLeft > 0f && !GuideWisp.PlayerActivated, "automatic guide start does not count as the player's own");
+            int wokenBefore = gm.SurvivorsWoken;
+            gm.SurvivorsWoken = 1;   // чтобы строка цели дошла до подсказки про Проводника
+            Check(gm.ObjectiveText().Contains("G — Проводник"), "objective line mentions the guide until the player uses it");
+            yield return Key(GKey.G);
+            yield return new WaitForSecondsRealtime(0.2f);
+            Check(GuideWisp.PlayerActivated && !gm.ObjectiveText().Contains("G — Проводник"), "pressing G removes the guide hint");
+            gm.SurvivorsWoken = wokenBefore;
+            Lamp nextHearth = null;
+            foreach (Lamp l in Lamp.All)
+                if (l.IsHearth && l.Progress > gm.Dir.Checkpoint.Progress + 0.01f && (nextHearth == null || l.Progress < nextHearth.Progress)) nextHearth = l;
+            Check(nextHearth != null && gm.ControlHintsVisible, "control hints are still shown before the first hearth after the start");
+            if (nextHearth != null)
+            {
+                gm.Player.TeleportTo(NearbyFree(nextHearth.BasePos, 3f), 0f);
+                yield return new WaitForSecondsRealtime(0.4f);
+                Check(!gm.ControlHintsVisible, "reaching the first hearth hides the control hints");
+            }
+            gm.QuitToMenu();
+            yield return new WaitForSecondsRealtime(0.8f);
+            Check(gm.ControlHintsVisible && !GuideWisp.PlayerActivated, "a new run brings both hints back");
+
+            // Бесконечный город: пункт меню, следующий город темнее, возвращения ограничены, конец забега идёт в таблицу рекордов.
+            yield return Key(GKey.Down);
+            yield return Key(GKey.Enter);
+            yield return new WaitForSecondsRealtime(0.6f);
+            Check(gm.Endless && gm.City == 1 && gm.State == GameState.Playing && !gm.Intro.Active && gm.ReturnsLeft == GameManager.EndlessReturnsStart,
+                "title menu starts the endless city without the intro");
+            int lampsFirst = Lamp.All.Count;
+            gm.Win();
+            yield return new WaitForSecondsRealtime(0.4f);
+            Check(gm.State == GameState.Victory && gm.CitiesCleared == 1 && gm.LastRecord == null, "endless: a finished city is counted, the run goes on");
+            float timeFirst = gm.PlayTime;
+            yield return Key(GKey.R);
+            yield return new WaitForSecondsRealtime(1.0f);
+            Check(gm.State == GameState.Playing && gm.City == 2 && GameDifficulty.City == 2 && LevelBuilder.CitySeed == 1
+                && gm.ReturnsLeft == GameManager.EndlessReturnsStart + 1 && gm.PlayTime >= timeFirst - 0.01f,
+                "endless: R brings the next city, the run clock and returns carry over");
+            Check(Survivor.All.Count == 10 && Lamp.All.Count == lampsFirst && GameDifficulty.PressureScale > 1.1f && !gm.ControlHintsVisible,
+                "endless: the next city keeps the street map, is more dangerous, and does not repeat the control hints");
+            gm.ReturnsLeft = 1;
+            gm.OnHeroDied();
+            Check(gm.State == GameState.Dead && !gm.RunOver, "endless: dying with a return left is not the end");
+            yield return Key(GKey.R);
+            yield return new WaitForSecondsRealtime(0.4f);
+            Check(gm.State == GameState.Playing && gm.ReturnsLeft == 0, "endless: R spends a return to the hearth");
+            gm.OnHeroDied();
+            Check(gm.State == GameState.Dead && gm.RunOver && gm.LastRank == 1
+                && RecordsStore.Table.Best(RunRecords.Endless, (int)Challenge.Standard) != null
+                && RecordsStore.Table.Best(RunRecords.Endless, (int)Challenge.Standard).Cities == 1,
+                "endless: dying without returns ends the run and writes it to the records table");
+            yield return Key(GKey.R);
+            yield return new WaitForSecondsRealtime(1.0f);
+            Check(gm.State == GameState.Playing && gm.Endless && gm.City == 1 && !gm.RunOver && GameDifficulty.City == 1
+                && gm.ReturnsLeft == GameManager.EndlessReturnsStart, "endless: R after the end starts a fresh run from the first city");
+            gm.QuitToMenu();
+            yield return new WaitForSecondsRealtime(0.8f);
+            Check(!gm.Endless && gm.City == 1 && GameDifficulty.City == 1 && LevelBuilder.CitySeed == 0, "leaving the endless run restores the classic city");
+
+            // Таблица рекордов в меню: пункт 2, Tab переключает режим, Esc возвращает на главную.
+            yield return Key(GKey.Down);
+            yield return Key(GKey.Down);
+            yield return Key(GKey.Enter);
+            Check(page.GetValue(gm.Menu).ToString() == "Records", "title menu opens the records table");
+            yield return Key(GKey.Tab);
+            var recMode = typeof(MenuUI).GetField("recordsMode", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Check((int)recMode.GetValue(gm.Menu) == 1, "Tab switches the records table to the endless city");
+            yield return Key(GKey.Esc);
+            Check(page.GetValue(gm.Menu).ToString() == "Root", "Esc leaves the records table");
+
+            yield return Key(GKey.Down);
+            yield return Key(GKey.Down);
             yield return Key(GKey.Down);
             yield return Key(GKey.Down);
             yield return Key(GKey.Enter);
@@ -315,8 +520,8 @@ namespace PokaGoryu
         void CheckEffects()
         {
             string[] keys = { "drone", "heart", "hum", "crackle", "inhale", "exhale", "flash", "beam", "wake",
-                "lampdie", "shadedie", "hit", "tide", "win", "eater", "shade", "step", "engine", "orb", "munch",
-                "fridge", "tick", "powerdown", "rumble", "sizzle", "swell" };
+                "lampdie", "shadedie", "hit", "tide", "win", "eater", "shade", "step", "step2", "rustle", "engine", "orb", "munch",
+                "fridge", "tick", "powerdown", "rumble", "sizzle", "swell", "drip" };
             float maximum = 0f;
             foreach (string key in keys)
             {
@@ -325,7 +530,7 @@ namespace PokaGoryu
                 clip.GetData(samples, 0);
                 foreach (float value in samples) maximum = Mathf.Max(maximum, Mathf.Abs(value));
             }
-            Check(maximum <= 0.90001f && maximum > 0.1f, "26 procedural effects have sample headroom; max=" + maximum.ToString("0.000"));
+            Check(maximum <= 0.90001f && maximum > 0.1f, keys.Length + " procedural effects have sample headroom; max=" + maximum.ToString("0.000"));
         }
 
         bool Free(Vector3 point)
