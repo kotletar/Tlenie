@@ -48,7 +48,9 @@ Input System и заменяемый `IGameInput` для проверок и в�
 Музыка. `MusicDirector` пробует `Resources.Load<AudioClip>("Music/FinalMinute")`. Если файл есть, отдельный `AudioSource` стартует вместе
 с минутой, ставится на паузу вместе с игрой, подтягивается к часам обороны при расхождении больше 0.4 с и затихает примерно за секунду,
 когда оборона кончилась (автобус уехал, герой погас, дорожка короче минуты); четыре адаптивных слоя при этом уходят (`FinalTrackActive`,
-`FinalTrackLevel`, `FinalTrackHeld`). Нет файла: всё играет как раньше. Громкость дорожки: `MusicDirector.FinalTrackGain`.
+`FinalTrackLevel`, `FinalTrackHeld`). Нет файла: всё играет как раньше. Сейчас в `Resources/Music` лежит `FinalMinute.wav` (61 с, 24 бита);
+`Assets/Editor/MusicImportSettings.cs` при первом импорте ставит Vorbis и хранение сжатым. Громкость дорожки: `MusicDirector.FinalTrackGain`
+(0.5, подобрана по уровню: дорожка около -15 дБFS RMS, слои финала около -21).
 
 ## Хранилища света, зеркала и линзы
 

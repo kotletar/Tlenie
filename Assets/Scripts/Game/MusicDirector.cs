@@ -16,8 +16,12 @@ namespace PokaGoryu
 
         /// <summary>Where the last-minute track lives inside Resources (any extension: mp3, ogg, wav). No file: the usual score plays.</summary>
         public const string FinalClipPath = "Music/FinalMinute";
-        /// <summary>Loudness of the track against the player's music volume. Stems use MixGain; raise or lower this if the track is off.</summary>
-        public static float FinalTrackGain = MixGain;
+        /// <summary>
+        /// Loudness of the track against the player's music volume. The supplied track is mastered loud (about -15 dBFS RMS, peak -0.9), the
+        /// stems at full intensity are about -21 dBFS RMS, so 0.39 would make the track exactly as loud as the usual music of the final;
+        /// 0.5 is about 2 dB above that, a finale. Raise or lower it by ear.
+        /// </summary>
+        public static float FinalTrackGain = 0.5f;
 
         readonly AudioSource[] sources = new AudioSource[SuspenseScore.Layers];
         readonly AudioClip[] clips = new AudioClip[SuspenseScore.Layers];

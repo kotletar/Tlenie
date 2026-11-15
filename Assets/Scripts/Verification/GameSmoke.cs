@@ -375,6 +375,17 @@ namespace PokaGoryu
             Approach(bus.FocusPoint, 1.2f);
             yield return new WaitForSecondsRealtime(0.2f);
             Check(gm.Player.FocusType == FocusKind.Bus, "gaze selects bus door");
+
+            // Музыка последней минуты: настоящий файл Resources/Music/FinalMinute есть в сборке и читается как клип. На время проверок его
+            // заменяет тихий клип на 75 с, чтобы настоящая музыка не гремела из колонок (подмена остаётся до конца проверок).
+            MusicDirector music = GetComponent<MusicDirector>();
+            AudioClip realTrack = music.FinalClip;
+            Check(realTrack != null && realTrack.channels == 2 && realTrack.length > 55f && realTrack.length < 75f,
+                "the final-minute track from Resources/Music is in the build and loads as a stereo clip" +
+                (realTrack != null ? " (" + realTrack.length.ToString("0.0") + " s, " + realTrack.frequency + " Hz)" : " (not found)"));
+            AudioClip finalTrack = AudioClip.Create("TestFinalTrack", 8000 * 75, 1, 8000, false);
+            music.FinalClip = finalTrack;
+
             input.Key(GKey.F, true);
             yield return new WaitForSecondsRealtime(5.5f);
             input.Key(GKey.F, false);
@@ -384,13 +395,10 @@ namespace PokaGoryu
                 "the final stand lasts a whole minute (" + bus.FinalLeft.ToString("0.0") + " s left, length " + bus.StandLength.ToString("0") + " s)");
             Check(gm.Dir.InHearth && gm.Dir.IsInHearth(bus.DoorPos), "the running bus is the last hearth: light does not smolder at its door");
             yield return new WaitForSecondsRealtime(3f);
-            MusicDirector music = GetComponent<MusicDirector>();
             Check(music.TargetIntensity == 1f && music.Intensity > 0.85f, "final stand raises adaptive score");
 
-            // Своя дорожка на минуту. Настоящий файл появится в Resources/Music/FinalMinute; здесь подставляем тихий клип на 75 с.
+            // Дорожка на минуту (подставной тихий клип) стартует вместе с обороной и забирает музыку у адаптивных слоёв
             gm.Hero.SetLife(100f, LightReason.Debug);
-            AudioClip finalTrack = AudioClip.Create("TestFinalTrack", 8000 * 75, 1, 8000, false);
-            music.FinalClip = finalTrack;
             yield return new WaitForSecondsRealtime(1.5f);
             AudioSource[] stems = FindMusic();
             Check(music.FinalTrackActive && music.FinalTrackLevel > 0.95f && stems[0].volume < 0.05f && stems[3].volume < 0.05f,
@@ -413,11 +421,16 @@ namespace PokaGoryu
             Check(Math.Abs(gm.Economy.ExpectedLight - gm.Hero.Life) < 0.01, "ledger reconciles after respawn");
             yield return new WaitForSecondsRealtime(0.9f);
             Check(!music.FinalTrackActive && music.FinalTrackLevel < 0.001f, "the track ends with the stand: the bus is back to idle and the stems return");
-            music.FinalClip = null;
-            Destroy(finalTrack);
             // Настоящий путь: автобус заведён светом и тронулся (Bus.Leave) — классика начинает концовку: автобус везёт героя и людей,
             // это ловушка, Тьма, герой просыпается за кухонным столом.
+            // Настоящая дорожка играет по-настоящему (звук выключен, чтобы не гремела из колонок): её позиция идёт вместе с обороной
+            music.FinalClip = realTrack;
+            AudioListener.volume = 0f;
             Bus.Instance.Feed(GameConfig.BusNeed + 1f);
+            yield return new WaitForSecondsRealtime(2.5f);
+            Check(music.FinalTrackActive && music.FinalTrackLevel > 0.9f && music.FinalTrackTime > 1.5f && music.FinalTrackTime < 4.5f,
+                "the real final-minute track plays with the final stand and keeps up with it (" + music.FinalTrackTime.ToString("0.0") + " s in)");
+            GameSettings.Apply();   // вернуть громкость
             Bus.Instance.FinalLeft = 0.05f;
             yield return new WaitForSecondsRealtime(1.2f);
             Check(gm.State == GameState.Ending && gm.Ending.Active && Bus.Instance.Scripted, "the bus leaving with the people starts the ending");
