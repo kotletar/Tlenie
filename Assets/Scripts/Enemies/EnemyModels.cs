@@ -10,7 +10,7 @@ namespace PokaGoryu
     /// Меши общие для всех врагов одного вида (строятся один раз, ключ в кеше), анимация — поворотом частей (EnemyRig).
     /// Оси частей: +Z — вперёд (куда смотрит враг), +Y — вверх, начало — на земле под телом.
     /// </summary>
-    public static class EnemyModels
+    public static partial class EnemyModels
     {
         static readonly Dictionary<string, Mesh> cache = new Dictionary<string, Mesh>();
 
@@ -138,9 +138,11 @@ namespace PokaGoryu
 
         // ------------------------------------------------------------------ Тень
 
-        public static readonly Color32 CloakDark = new Color32(34, 30, 56, 255);
-        public static readonly Color32 CloakLight = new Color32(52, 46, 84, 255);
-        public static readonly Color32 CloakLining = new Color32(70, 60, 108, 255);
+        // темнее прежнего: на чёрном плаще светящиеся глаза и оскал контрастнее
+        public static readonly Color32 CloakDark = new Color32(28, 24, 46, 255);
+        public static readonly Color32 CloakLight = new Color32(44, 38, 72, 255);
+        public static readonly Color32 CloakLining = new Color32(60, 52, 96, 255);
+        static readonly Color32 ShadeBone = new Color32(112, 106, 134, 255);
 
         /// <summary>Плащ и туловище: ссутулившийся силуэт от рваного подола до плеч, подол двигается зубцами и лоскутами.</summary>
         public static Mesh ShadeCloak()
@@ -190,6 +192,19 @@ namespace PokaGoryu
                         Spike(b, from, new Vector3(side * 1f, -0.9f, 0.1f), 0.05f, 0.30f + 0.12f * Rnd(k, side + 2, 44), 4, Mul(CloakDark, 1.2f));
                     }
                 }
+                // костяные наплечники-шипы: острые, торчат вверх и чуть назад, силуэт с «рогатыми» плечами
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    Spike(b, new Vector3(side * 0.40f, 1.98f, 0.08f), new Vector3(side * 0.45f, 1f, -0.15f), 0.06f, 0.42f, 5, ShadeBone);
+                    Spike(b, new Vector3(side * 0.30f, 2.02f, -0.06f), new Vector3(side * 0.25f, 1f, -0.55f), 0.045f, 0.30f, 5, Mul(ShadeBone, 0.85f));
+                }
+                // хребет прорвал плащ сзади: ряд бледных шипов вдоль спины сверху вниз
+                for (int k = 0; k < 6; k++)
+                {
+                    float y = 2.0f - 0.20f * k;
+                    float z = Mathf.Lerp(-0.10f, -0.38f, k / 5f);
+                    Spike(b, new Vector3(0f, y, z), new Vector3(0f, 0.55f, -1f), 0.045f - 0.004f * k, 0.26f - 0.02f * k, 5, Mul(ShadeBone, 1f - 0.05f * k));
+                }
                 // лоскуты по подолу: длинные узкие треугольники, подкладка светлее
                 for (int j = 0; j < sides; j++)
                 {
@@ -236,10 +251,17 @@ namespace PokaGoryu
                     Vector3 p0 = new Vector3(Mathf.Cos(a) * 0.30f, 2.36f, 0.35f + Mathf.Sin(a) * 0.30f);
                     b.Box(p0, new Vector3(0.05f, 0.34f, 0.04f), Mul(CloakDark, 0.7f));
                 }
+                // венец шипов по верхнему ободу капюшона: рваный остроконечный силуэт, виден со всех сторон
+                for (int k = 0; k < 8; k++)
+                {
+                    float a = k * 6.2831853f / 8f + 0.2f;
+                    Vector3 from = new Vector3(Mathf.Cos(a) * 0.20f, 2.62f, 0.33f + Mathf.Sin(a) * 0.22f);
+                    Spike(b, from, new Vector3(Mathf.Cos(a) * 0.7f, 1f, Mathf.Sin(a) * 0.7f), 0.035f, 0.20f + 0.12f * Rnd(k, 8, 53), 4, Mul(CloakLining, 0.8f));
+                }
             });
         }
 
-        /// <summary>Глаза Тени: две косые бледные пластины у лицевого провала (светятся, материал без освещения).</summary>
+        /// <summary>Глаза Тени: две крупные косые пластины у лицевого провала (светятся, материал без освещения).</summary>
         public static Mesh ShadeEyes()
         {
             return Get("ShadeEyes", delegate(MeshBatch b)
@@ -247,15 +269,74 @@ namespace PokaGoryu
                 Color32 white = C(255, 255, 255);
                 for (int side = -1; side <= 1; side += 2)
                 {
-                    float x = side * 0.105f;
-                    Vector3 c = new Vector3(x, 2.40f, 0.685f);   // перед лицевым провалом капюшона (его передняя стенка на z ~ 0.65), иначе глаза внутри и не видны
-                    // миндалевидный глаз со злым наклоном: внутренний уголок ниже, внешний выше; бледный, пустой, без зрачка. Двусторонний
-                    Vector3 inner = c + new Vector3(-side * 0.060f, -0.030f, 0f);
-                    Vector3 top = c + new Vector3(side * 0.005f, 0.040f, 0f);
-                    Vector3 outer = c + new Vector3(side * 0.075f, 0.034f, 0f);
-                    Vector3 low = c + new Vector3(side * 0.012f, -0.026f, 0f);
+                    float x = side * 0.112f;
+                    Vector3 c = new Vector3(x, 2.41f, 0.690f);   // перед лицевым провалом капюшона (его передняя стенка на z ~ 0.65), иначе глаза внутри и не видны
+                    // крупный миндалевидный глаз с резким злым наклоном: внутренний уголок заметно ниже внешнего; бледный, пустой. Двусторонний
+                    Vector3 inner = c + new Vector3(-side * 0.082f, -0.048f, 0f);
+                    Vector3 top = c + new Vector3(side * 0.012f, 0.058f, 0f);
+                    Vector3 outer = c + new Vector3(side * 0.104f, 0.046f, 0f);
+                    Vector3 low = c + new Vector3(side * 0.020f, -0.034f, 0f);
                     b.Quad(inner, top, outer, low, white);
                     b.Quad(low, outer, top, inner, white);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Оскал Тени: светящаяся зазубренная улыбка в чёрной пустоте капюшона (пила из треугольников, зубы сверху и снизу вразбежку, края выше
+        /// середины). Построен вокруг своего центра, чтобы в нападении раскрываться по высоте. Материал без освещения, как у глаз.
+        /// </summary>
+        public static Mesh ShadeGrin()
+        {
+            return Get("ShadeGrin", delegate(MeshBatch b)
+            {
+                Color32 white = C(255, 255, 255);
+                int n = 10;
+                float halfW = 0.17f;
+                float h = 0.030f;
+                for (int i = 0; i < n; i++)
+                {
+                    float x0 = -halfW + 2f * halfW * i / n;
+                    float x1 = -halfW + 2f * halfW * (i + 1) / n;
+                    float xm = (x0 + x1) * 0.5f;
+                    float y0 = 1.9f * x0 * x0;
+                    float y1 = 1.9f * x1 * x1;
+                    float ym = 1.9f * xm * xm;
+                    Vector3 p0;
+                    Vector3 p1;
+                    Vector3 tip;
+                    if (i % 2 == 0)
+                    {
+                        // зуб сверху вниз: основание на верхней кромке, остриё на нижней
+                        p0 = new Vector3(x0, y0 + h, 0f);
+                        p1 = new Vector3(x1, y1 + h, 0f);
+                        tip = new Vector3(xm, ym - h, 0f);
+                    }
+                    else
+                    {
+                        p0 = new Vector3(x0, y0 - h, 0f);
+                        p1 = new Vector3(x1, y1 - h, 0f);
+                        tip = new Vector3(xm, ym + h, 0f);
+                    }
+                    b.Tri(p0, tip, p1, white);
+                    b.Tri(p0, p1, tip, white);
+                }
+            });
+        }
+
+        /// <summary>Обрывки Тьмы вокруг Тени: восемь тёмных осколков-ромбов на разной высоте и расстоянии (EnemyRig вращает их вокруг неё).</summary>
+        public static Mesh ShadeShards()
+        {
+            return Get("ShadeShards", delegate(MeshBatch b)
+            {
+                for (int k = 0; k < 8; k++)
+                {
+                    float a = k * 2.3999f;
+                    float r = 0.62f + 0.28f * Rnd(k, 1, 181);
+                    float y = 0.5f + 1.9f * Rnd(k, 2, 182);
+                    float s = 0.05f + 0.06f * Rnd(k, 3, 183);
+                    Vector3 c = new Vector3(Mathf.Cos(a) * r, y, 0.15f + Mathf.Sin(a) * r * 0.8f);
+                    Ball(b, c, new Vector3(s * 0.7f, s * 1.7f, s * 0.5f), 4, 2, Mul(CloakLining, 0.7f + 0.5f * Rnd(k, 4, 184)), null);
                 }
             });
         }
@@ -269,6 +350,8 @@ namespace PokaGoryu
                 b.Frustum(new Vector3(0f, -0.34f, 0f), Vector3.down, 0.085f, 0.062f, 0.68f, 7, sleeve, false, true);
                 b.Box(new Vector3(0f, 0.0f, 0f), new Vector3(0.20f, 0.17f, 0.20f), Mul(CloakDark, 1.1f));   // накладка на плече
                 b.Frustum(new Vector3(0f, -0.64f, 0f), Vector3.down, 0.07f, 0.075f, 0.10f, 7, Mul(CloakLining, 0.8f), false, false);
+                // костяной шип на локте, острие назад и вниз
+                Spike(b, new Vector3(0f, -0.68f, -0.04f), new Vector3(0f, -0.35f, -1f), 0.04f, 0.20f, 5, ShadeBone);
             });
         }
 
@@ -279,28 +362,28 @@ namespace PokaGoryu
             {
                 Color32 sleeve = Mul(CloakLight, 0.9f);
                 Color32 skin = C(58, 54, 78);
-                Color32 claw = C(150, 150, 178);
+                Color32 claw = C(176, 176, 204);
                 b.Frustum(new Vector3(0f, -0.36f, 0f), Vector3.down, 0.068f, 0.040f, 0.72f, 7, sleeve, false, false);
                 // широкий рваный манжет у запястья
                 b.Frustum(new Vector3(0f, -0.66f, 0f), Vector3.down, 0.04f, 0.095f, 0.14f, 7, Mul(CloakDark, 1.2f), false, true);
-                // кисть: ладонь и пять когтистых пальцев веером; пальцы тонкие и длинные, у каждого сустав
+                // кисть: ладонь и пять очень длинных суставчатых пальцев веером; на концах изогнутые вперёд когти
                 b.Box(new Vector3(0f, -0.80f, 0.01f), new Vector3(0.12f, 0.10f, 0.05f), skin);
                 for (int f = 0; f < 4; f++)
                 {
                     float spread = (f - 1.5f) * 0.045f;
-                    float len1 = 0.17f + 0.04f * Rnd(f, side + 2, 61);
+                    float len1 = 0.19f + 0.05f * Rnd(f, side + 2, 61);
                     Vector3 s0 = new Vector3(spread, -0.84f, 0.01f);
                     Vector3 s1 = s0 + new Vector3(spread * 0.9f, -len1, 0.035f);
-                    Vector3 s2 = s1 + new Vector3(spread * 0.5f, -0.15f, 0.07f);
+                    Vector3 s2 = s1 + new Vector3(spread * 0.5f, -0.17f, 0.08f);
                     b.Rod(s0, s1, 0.011f, 5, skin);
                     b.Rod(s1, s2, 0.008f, 5, skin);
-                    Spike(b, s2, (s2 - s1) + new Vector3(0f, -0.04f, 0.10f), 0.008f, 0.12f, 5, claw);
+                    Horn(b, s2, (s2 - s1) + new Vector3(0f, -0.04f, 0.10f), new Vector3(0f, -0.20f, 1.0f), 0.009f, 0.16f, 3, claw);
                 }
                 // большой палец в сторону
                 Vector3 t0 = new Vector3(-side * 0.06f, -0.80f, 0.02f);
                 Vector3 t1 = t0 + new Vector3(-side * 0.08f, -0.10f, 0.05f);
                 b.Rod(t0, t1, 0.012f, 5, skin);
-                Spike(b, t1, new Vector3(-side * 0.5f, -1f, 0.8f), 0.009f, 0.11f, 5, claw);
+                Horn(b, t1, new Vector3(-side * 0.5f, -1f, 0.8f), new Vector3(0f, -0.20f, 1.0f), 0.009f, 0.13f, 3, claw);
             });
         }
 
@@ -309,7 +392,8 @@ namespace PokaGoryu
         {
             return Get("ShadeTail" + variant, delegate(MeshBatch b)
             {
-                float len = 1.15f + 0.2f * variant;
+                // три нижних ленты длинные, две верхние (от лопаток) короче: висят в воздухе, как обрывки плаща
+                float len = variant < 3 ? 1.15f + 0.2f * variant : 1.00f + 0.12f * (variant - 3);
                 int links = 4;
                 Vector3[] left = new Vector3[links + 1];
                 Vector3[] right = new Vector3[links + 1];
@@ -464,6 +548,56 @@ namespace PokaGoryu
             b.Frustum(mid + d2 * (len * 0.25f), d2, r0 * 0.62f, 0.003f, len * 0.52f, 5, tip, false, false);
         }
 
+        static readonly Ring[] EaterRings =
+        {
+            new Ring(0.55f, 1.50f, 1.30f, 0f, 0f),
+            new Ring(1.10f, 2.00f, 1.75f, 0f, 0.02f),
+            new Ring(1.85f, 2.35f, 2.00f, 0f, 0.05f),
+            new Ring(2.70f, 2.20f, 1.90f, 0f, 0.10f),
+            new Ring(3.50f, 1.70f, 1.50f, 0f, 0.12f),
+            new Ring(4.20f, 1.00f, 0.95f, 0f, 0.10f),
+            new Ring(4.55f, 0.30f, 0.30f, 0f, 0.08f)
+        };
+        const int EaterSides = 18;
+        // Лобовая стенка туши в зоне пасти не выходит вперёд плоскости глотки: раньше выпуклая грань (шум радиуса до +16%) торчала сквозь
+        // диски глотки тёмно-синим куском посреди пасти. Глотка начинается на MouthCz - 0.05, стенка кончается на 7 см позади неё.
+        const float FaceLimit = MouthCz - 0.12f;
+
+        /// <summary>Множитель радиуса вершины туши (шум); в зоне пасти ограничен так, чтобы стенка не торчала сквозь глотку.</summary>
+        static float EaterScale(int i, int j)
+        {
+            float m = 0.88f + 0.22f * Rnd(i, j, 101) + 0.06f * Mathf.Sin(j * 1.7f + i);
+            Ring r = EaterRings[i];
+            float a = j * 6.2831853f / EaterSides;
+            float s = Mathf.Sin(a);
+            if (s > 0.3f && r.Y > 0.7f && r.Y < 3.0f && Mathf.Abs(Mathf.Cos(a)) * r.Rx * m < 2.0f)
+            {
+                float front = r.Cz + s * r.Rz * m;
+                if (front > FaceLimit) m = (FaceLimit - r.Cz) / (s * r.Rz);
+            }
+            return m;
+        }
+
+        /// <summary>На сколько самая выдающаяся вперёд вершина туши в зоне пасти выходит за FaceLimit, метры (не больше нуля: стенка позади глотки); для проверки.</summary>
+        public static float EaterFaceOverhang()
+        {
+            float worst = -10f;
+            for (int i = 0; i < EaterRings.Length; i++)
+            {
+                Ring r = EaterRings[i];
+                if (r.Y <= 0.7f || r.Y >= 3.0f) continue;
+                for (int j = 0; j < EaterSides; j++)
+                {
+                    float a = j * 6.2831853f / EaterSides;
+                    float s = Mathf.Sin(a);
+                    float m = EaterScale(i, j);
+                    if (s <= 0.3f || Mathf.Abs(Mathf.Cos(a)) * r.Rx * m >= 2.0f) continue;
+                    worst = Mathf.Max(worst, r.Cz + s * r.Rz * m - FaceLimit);
+                }
+            }
+            return worst;
+        }
+
         /// <summary>
         /// Туша: бугристая масса с рубцами и тёмными жилами, хребет шипов, бычьи рога дугой, рёбра торчат из боков, венец шипов, бородавки;
         /// спереди широкая впадина пасти (губа и зубы верхней челюсти — часть меша).
@@ -472,20 +606,11 @@ namespace PokaGoryu
         {
             return Get("EaterBody", delegate(MeshBatch b)
             {
-                Ring[] rings =
-                {
-                    new Ring(0.55f, 1.50f, 1.30f, 0f, 0f),
-                    new Ring(1.10f, 2.00f, 1.75f, 0f, 0.02f),
-                    new Ring(1.85f, 2.35f, 2.00f, 0f, 0.05f),
-                    new Ring(2.70f, 2.20f, 1.90f, 0f, 0.10f),
-                    new Ring(3.50f, 1.70f, 1.50f, 0f, 0.12f),
-                    new Ring(4.20f, 1.00f, 0.95f, 0f, 0.10f),
-                    new Ring(4.55f, 0.30f, 0.30f, 0f, 0.08f)
-                };
-                int sides = 18;
+                Ring[] rings = EaterRings;
+                int sides = EaterSides;
                 Color32 scar = C(120, 106, 134);
                 Loft(b, rings, sides, true, true,
-                    delegate(int i, int j) { return 0.88f + 0.22f * Rnd(i, j, 101) + 0.06f * Mathf.Sin(j * 1.7f + i); },
+                    EaterScale,
                     null,
                     delegate(int i, int j)
                     {
@@ -550,7 +675,7 @@ namespace PokaGoryu
             int seg = 28;
             for (int j = 0; j < seg; j++)
             {
-                float a = (j + 0.5f) * 6.2831853f / seg;
+                float a = j * 6.2831853f / seg;   // кирпич ровно на оси: сверху и снизу по центру нет щели, в которой торчал красный диск глотки
                 Vector2 p = MouthPoint(a, 1.04f);
                 Color32 c = Mul(lip, 0.78f + 0.44f * Rnd(j, 4, 123));
                 if (Rnd(j, 5, 124) > 0.82f) c = Mix(c, C(128, 112, 124), 0.4f);

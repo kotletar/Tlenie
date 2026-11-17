@@ -29,6 +29,15 @@ namespace PokaGoryu
         public bool Scripted;
         public Vector3 StartPos { get { return startPos; } }
 
+        /// <summary>
+        /// Концовка: насколько фары светят «снаружи» (1 — как у заведённого автобуса, пока герой бежит к двери; 0 — как в салоне).
+        /// Режиссёр сводит её к нулю после порога.
+        /// </summary>
+        public float CineLight;
+
+        /// <summary>Кузов автобуса снаружи сейчас рисуется (в концовке прячется, когда камера входит в салон).</summary>
+        public bool ExteriorVisible { get; private set; }
+
         public bool CanFeed { get { return State == Mode.Idle; } }
         public Vector3 DoorPos { get { return startPos + new Vector3(-2.6f, 0f, 1.5f); } }
         public Vector3 FocusPoint { get { return DoorPos + Vector3.up * 1.3f; } }
@@ -42,6 +51,7 @@ namespace PokaGoryu
         Transform ring;
         AudioSource engine;
         float leaveT;
+        Renderer[] bodyParts;   // собственные детали автобуса; салон концовки (RideStage) — тоже его дочерний объект, этот список его не включает
 
         public static Bus Create(Transform parent, Vector3 pos)
         {
@@ -90,6 +100,8 @@ namespace PokaGoryu
 
             engine = ProcAudio.Source(gameObject, "engine", true, 0f, true);
             LightField.Register(this);
+            bodyParts = GetComponentsInChildren<Renderer>(true);
+            ExteriorVisible = true;
         }
 
         void OnDestroy()
@@ -138,6 +150,8 @@ namespace PokaGoryu
         {
             State = Mode.Leaving;
             leaveT = 0f;
+            Enemy boss = Enemy.FindBoss();
+            if (boss != null) boss.BossDepart();   // босс не успел погибнуть: автобус уехал, он остался позади
             GameManager gm = GameManager.Instance;
             if (gm == null) return;
             gm.Notify("Автобус отправляется");
@@ -146,31 +160,50 @@ namespace PokaGoryu
         }
 
         /// <summary>
-        /// Концовка: автобус снова у вокзала (людей он уже принял), дальше его ведёт режиссёр. Снаружи не нужны ни огни у фар,
-        /// ни шкала, ни кольцо у двери.
+        /// Концовка: автобус снова у вокзала (людей он уже принял), дальше его ведёт режиссёр. Нет ни шкалы топлива, ни кольца у двери.
+        /// fromOutside: концовка начинается с того, что герой бежит к двери, значит, кузов снаружи и фары нужны, пока он не вошёл
+        /// (HideExterior). Без этого камера сразу в салоне и кузов не рисуется.
         /// </summary>
-        public void BeginCinematic()
+        public void BeginCinematic(bool fromOutside = false)
         {
             Scripted = true;
             State = Mode.Leaving;
             transform.position = startPos;
             if (engine != null) AudioMix.SetVolume(engine, 0f);
             if (ring != null) ring.gameObject.SetActive(false);
-            haloMat.SetColor("_Color", new Color(0.9f, 0.95f, 1f, 0f));
+            CineLight = fromOutside ? 1f : 0f;
+            haloMat.SetColor("_Color", new Color(0.9f, 0.95f, 1f, fromOutside ? 0.55f : 0f));
             // Камера едет внутри: кузов с его гранями наружу изнутри не нужен (верх нижнего короба висел бы «вторым полом» на 1.6 м)
-            SetBodyVisible(false);
+            SetBodyVisible(fromOutside);
+        }
+
+        /// <summary>Камера вошла в салон: кузов снаружи не рисуется (его грани смотрят наружу, а верх нижнего короба висел бы в салоне «вторым полом»).</summary>
+        public void HideExterior()
+        {
+            if (ExteriorVisible) SetBodyVisible(false);
+        }
+
+        /// <summary>Камера снова снаружи (перемотка концовки назад в автотестах).</summary>
+        public void ShowExterior()
+        {
+            if (!ExteriorVisible) SetBodyVisible(true);
         }
 
         void SetBodyVisible(bool visible)
         {
-            Renderer[] parts = GetComponentsInChildren<Renderer>(true);
-            for (int i = 0; i < parts.Length; i++) parts[i].enabled = visible;
+            ExteriorVisible = visible;
+            if (bodyParts == null) return;
+            for (int i = 0; i < bodyParts.Length; i++)
+            {
+                if (bodyParts[i] != null) bodyParts[i].enabled = visible;
+            }
         }
 
         public void ResetToInitial()
         {
             if (Scripted) SetBodyVisible(true);
             Scripted = false;
+            CineLight = 0f;
             State = Mode.Idle;
             Charge = 0f;
             BoardedCount = 0;
@@ -263,7 +296,7 @@ namespace PokaGoryu
                     if (Charge <= 0.01f) return 0f;
                     return 3f + 5f * Mathf.Clamp01(Charge / GameConfig.BusNeed);
                 }
-                return Scripted ? 10f : 22f;   // в концовке камера внутри: фары рядом с салоном были бы слишком яркими
+                return Scripted ? Mathf.Lerp(10f, 22f, CineLight) : 22f;   // в концовке камера внутри: фары рядом с салоном были бы слишком яркими
             }
         }
 
@@ -272,7 +305,7 @@ namespace PokaGoryu
             get
             {
                 if (State == Mode.Idle) return 0.3f * Mathf.Clamp01(Charge / GameConfig.BusNeed);
-                return Scripted ? 0.35f : 1.4f;
+                return Scripted ? Mathf.Lerp(0.35f, 1.4f, CineLight) : 1.4f;
             }
         }
 

@@ -18,6 +18,26 @@ namespace PokaGoryu
         public const float DefaultVignette = 2f;
         public float Vignette = DefaultVignette;   // сила виньетки; концовка смыкает края кадра
 
+        // Финальная минута (FinalScreenFx): всё это нулевое в остальной игре
+        public Color FinalTint = new Color(0f, 0f, 0f, 0f);   // цвет каёмки по краям кадра (rgb) и её сила (a)
+        public Vector4 Ripple = new Vector4(0.5f, 0.5f, 0f, 0f);   // кольцо-волна: центр (x, y в долях кадра), радиус (в высотах кадра), сила
+        public float Embers;                                  // 0..1: летящие по экрану угольки
+        public float ChromaBoost;                             // добавка к хроматической аберрации
+        public float Zoom;                                    // 0..0.02: наезд к центру кадра (удар сердца)
+        public float Bloom = DefaultBloom;                    // свечение ярких огней
+        public const float DefaultBloom = 0.7f;
+
+        /// <summary>Убрать всё, что добавляет финальная минута (концовка и меню начинают с чистого экрана).</summary>
+        public void ClearFinalFx()
+        {
+            FinalTint = new Color(0f, 0f, 0f, 0f);
+            Ripple = new Vector4(0.5f, 0.5f, 0f, 0f);
+            Embers = 0f;
+            ChromaBoost = 0f;
+            Zoom = 0f;
+            Bloom = DefaultBloom;
+        }
+
         const int PostLayer = 31;
         const int FeatherLayer = 30;
 
@@ -119,6 +139,12 @@ namespace PokaGoryu
             postMat.SetFloat("_Brightness", Gfx.Brightness);
             postMat.SetFloat("_Glitch", Mathf.Clamp01(Glitch + ExtraGlitch));
             postMat.SetFloat("_Vignette", Vignette);
+            postMat.SetColor("_Tint", FinalTint);
+            postMat.SetVector("_Ripple", Ripple);
+            postMat.SetFloat("_Embers", Embers);
+            postMat.SetFloat("_ChromaBoost", ChromaBoost);
+            postMat.SetFloat("_Zoom", Zoom);
+            postMat.SetFloat("_Bloom", Bloom);
         }
     }
 }

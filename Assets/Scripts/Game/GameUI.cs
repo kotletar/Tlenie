@@ -396,9 +396,11 @@ namespace PokaGoryu
                 ? "Время забега: " + Clock(gm.PlayTime) + "    Возвращений к очагу: " + gm.Deaths + " (осталось " + gm.ReturnsLeft + ")\n"
                   + "Следующий город темнее: больше Теней, быстрее тает свет, больше погасших ламп."
                 : "Время: " + Clock(gm.PlayTime) + "    Возвращений к очагу: " + gm.Deaths + "\n" + RankLine(gm);
+            // босс последней минуты: был ли он в этом забеге и добили ли его до отъезда автобуса
+            string bossLine = gm.Dir != null && gm.Dir.BossSpawned ? (gm.BossesKilled > 0 ? "Великий Гаситель повержен\n" : "Великий Гаситель остался за спиной\n") : "";
             string stats = gm.Endless
-                ? "Спасено: " + boarded + " из " + total + "\n" + "Огней осталось городу: " + lamps + "\n" + city + "\n" + tail
-                : "Спасено во сне: " + boarded + " из " + total + "\n" + tail;
+                ? "Спасено: " + boarded + " из " + total + "\n" + bossLine + "Огней осталось городу: " + lamps + "\n" + city + "\n" + tail
+                : "Спасено во сне: " + boarded + " из " + total + "\n" + bossLine + tail;
             Text(new Rect(0f, h * 0.18f, w, h * 0.14f), title, big, ink);
             Text(new Rect(w * 0.1f, h * 0.36f, w * 0.8f, h * 0.08f), verdict, mid, ink);
             Text(new Rect(w * 0.1f, h * 0.46f, w * 0.8f, h * 0.2f), stats, small, ink);

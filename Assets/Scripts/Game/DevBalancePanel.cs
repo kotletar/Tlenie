@@ -8,8 +8,8 @@ namespace PokaGoryu
     {
         static readonly string[] Names = { "SmolderPerSec", "AuraCostK", "HearthRegenPerSec", "InhaleRate",
             "ResonancePerSec", "OrbValueShade", "OrbValueSnuffer", "OrbValueEater", "DistrictPressure", "TidePressure", "FinalPressure",
-            "FinalTime", "FinalEaterInterval" };
-        static readonly float[] Maximum = { 1f, 0.12f, 2f, 30f, 1.5f, 30f, 30f, 100f, 1f, 3f, 4f, 120f, 40f };
+            "FinalTime", "FinalEaterInterval", "BossHealth", "BossCoreMul", "BossBleed", "BossWindow", "BossLanceDamage" };
+        static readonly float[] Maximum = { 1f, 0.12f, 2f, 30f, 1.5f, 30f, 30f, 100f, 1f, 3f, 4f, 120f, 40f, 2000f, 4f, 0.3f, 10f, 40f };
         FieldInfo[] fields;
         bool shown, wasPaused;
         GameManager gm;

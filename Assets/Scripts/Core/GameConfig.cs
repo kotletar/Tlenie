@@ -98,6 +98,22 @@ namespace PokaGoryu
         public static float BusFeedFromSurvivor = 3.5f;
         public static float FinalTime = 60f;          // последняя минута: сколько держать оборону после запуска двигателя (раньше 18 с); под неё ляжет музыка
 
+        // ---------- Босс последней минуты: Великий Гаситель ----------
+        // Парит над площадью вокзала. Под бронёй неуязвим и бьёт копьями Тьмы; раз в несколько секунд броня раскрывается, и по ядру можно бить.
+        // Здоровье делится на три трети: пока третья не опустошена, окно закрывается по времени и открывается снова.
+        // Выстрел по ядру (30 урона) пролетает с множителем BossCoreMul и возвращает часть света: ядро проливает украденное.
+        public static bool BossEnabled = true;
+        public static float BossArriveDelay = 12f;   // через сколько секунд после запуска двигателя он поднимается над городом
+        public static float BossFlyTime = 9f;       // сколько летит к вокзалу (издалека виден силуэт); всё это время броня закрыта
+        public static float BossHealth = 540f;       // всего: три трети по 180
+        public static float BossCoreMul = 1.5f;      // урон по открытому ядру: выстрел 30 -> 45 (броня глотает весь урон)
+        public static float BossBleed = 0.05f;       // света герою за каждую единицу урона по ядру: выстрел стоит 5, возвращает ~2,25
+        public static float BossWindow = 4.6f;       // сколько секунд ядро открыто в первой трети (в каждой следующей на 0,5 с меньше)
+        public static float BossLanceDamage = 9f;    // света за попадание копья Тьмы
+        public static float BossLanceRadius = 1.15f; // толщина копья, м (плюс тело героя)
+        public static float BossBreakLight = 8f;     // свет, который проливается, когда опустошена очередная треть
+        public static float BossDeathLight = 16f;    // и когда он гибнет
+
         // Spawn pressure and pacing; Standard preserves the previous balance.
         public static float DistrictPressure = 0.3f;
         public static float TidePressure = 1.2f;
@@ -188,6 +204,17 @@ namespace PokaGoryu
             BusNeed = 60f;
             BusFeedFromSurvivor = 3.5f;
             FinalTime = 60f;
+            BossEnabled = true;
+            BossArriveDelay = 12f;
+            BossFlyTime = 9f;
+            BossHealth = 540f;
+            BossCoreMul = 1.5f;
+            BossBleed = 0.05f;
+            BossWindow = 4.6f;
+            BossLanceDamage = 9f;
+            BossLanceRadius = 1.15f;
+            BossBreakLight = 8f;
+            BossDeathLight = 16f;
             DistrictPressure = 0.3f;
             TidePressure = 1.2f;
             FinalPressure = 1.5f;

@@ -118,8 +118,8 @@ namespace PokaGoryu
             else if (gm.State == GameState.Ending && gm.Ending != null)
             {
                 // Ending: a warm bed while the bus rides toward the "dawn", the stems drain away as the trap closes, silence in the kitchen.
-                float ride = 1f - Mathf.InverseLerp(14.2f, 15.4f, gm.Ending.Elapsed);
-                float trap = Mathf.InverseLerp(10.0f, 14.6f, gm.Ending.Elapsed);
+                float ride = 1f - Mathf.InverseLerp(14.2f, 15.4f, gm.Ending.RideTime);   // времена поездки: посадка (бег к автобусу) идёт на тёплой подложке
+                float trap = Mathf.InverseLerp(10.0f, 14.6f, gm.Ending.RideTime);
                 bed = ride * Mathf.Lerp(0.30f, 0.18f, trap);
                 motif = ride * 0.22f * (1f - trap);
                 pressure = ride * 0.75f * trap;
@@ -196,7 +196,7 @@ namespace PokaGoryu
                     Enemy e = Enemy.All[i];
                     if (e == null || e.Health <= 0f || !e.gameObject.activeInHierarchy) continue;
                     float d = Vector3.Distance(p, e.transform.position);
-                    float weight = e.Kind == EnemyKind.Eater ? 0.80f : 0.48f;
+                    float weight = e.Kind == EnemyKind.Boss ? 1f : e.Kind == EnemyKind.Eater ? 0.80f : 0.48f;
                     nearby += Mathf.InverseLerp(24f, 4f, d) * weight;
                 }
             }

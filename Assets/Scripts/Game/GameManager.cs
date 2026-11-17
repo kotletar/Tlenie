@@ -32,6 +32,7 @@ namespace PokaGoryu
         public int SurvivorsWoken;
         public int SurvivorsLost;
         public int EnemiesKilled;
+        public int BossesKilled;   // Великий Гаситель побеждён в этом забеге
         public int Deaths;
         public float PlayTime;
         public float WinFade;
@@ -112,6 +113,7 @@ namespace PokaGoryu
             Ending = gameObject.AddComponent<EndingDirector>();
             LowRes lr = gameObject.AddComponent<LowRes>();
             lr.Init(Player.Cam);
+            gameObject.AddComponent<FinalScreenFx>();
             GuideWisp.Create(transform);
 
             DisableOtherCameras();
@@ -183,6 +185,7 @@ namespace PokaGoryu
             SurvivorsWoken = 0;
             SurvivorsLost = 0;
             EnemiesKilled = 0;
+            BossesKilled = 0;
             WinFade = 0f;
             CityTime = 0f;
             if (!keepRun)
@@ -332,6 +335,29 @@ namespace PokaGoryu
 #endif
         }
 
+        /// <summary>
+        /// «К последнему очагу» из паузы: выход, если застрял. Всё как после гибели (мир за очагом сбрасывается, враги исчезают, возвращение
+        /// засчитывается, в бесконечном городе тратится одно из возвращений), но герой не погибает и света ему не убавляют.
+        /// </summary>
+        public bool ReturnToHearth()
+        {
+            if (State != GameState.Playing || Dir == null) return false;
+            if (Endless)
+            {
+                if (ReturnsLeft <= 0)
+                {
+                    Notify("Возвращений к очагу не осталось");
+                    return false;
+                }
+                ReturnsLeft--;
+            }
+            Deaths++;
+            SetPaused(false);
+            Dir.Respawn(true);
+            Notify("Вы вернулись к последнему очагу");
+            return true;
+        }
+
         public void Respawn()
         {
             if (State != GameState.Dead) return;
@@ -431,6 +457,7 @@ namespace PokaGoryu
         {
             EnemiesKilled++;
             if (e.Kind == EnemyKind.Eater) Notify("Пожиратель рассеялся");
+            if (e.Kind == EnemyKind.Boss) BossesKilled++;
         }
 
         public int LampsLeft()
@@ -461,7 +488,15 @@ namespace PokaGoryu
             if (bus != null && bus.State == Bus.Mode.Running)
             {
                 int left = Mathf.CeilToInt(Mathf.Max(0f, bus.FinalLeft));
-                return "Держи круг! До отправления: " + (left / 60) + ":" + (left % 60).ToString("00");
+                string time = (left / 60) + ":" + (left % 60).ToString("00");
+                Enemy boss = Enemy.FindBoss();
+                if (boss != null)
+                {
+                    if (boss.CoreExposed) return "ЯДРО ОТКРЫТО: БЕЙ! До отправления: " + time;
+                    if (boss.BossState == BossMode.Arrive) return "Что-то приближается… До отправления: " + time;
+                    return "Броня глотает свет: береги его. До отправления: " + time;
+                }
+                return "Держи круг! До отправления: " + time;
             }
 
             if (bus != null && bus.State == Bus.Mode.Idle && Player != null && bus.DistanceTo(Player.transform.position) < 34f)

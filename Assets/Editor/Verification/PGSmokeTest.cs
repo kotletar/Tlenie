@@ -147,12 +147,18 @@ namespace PokaGoryu.EditorTools
                 else if (scenario == "mugview_ending") StepMugView(gm, true);
                 else if (scenario == "windowview") StepWindowView(gm);
                 else if (scenario == "jamshots") StepJamShots(gm);
+                else if (scenario == "survivorpass") StepSurvivorPass(gm);
+                else if (scenario == "eaterlook") StepEaterLook(gm);
+                else if (scenario == "boss") StepBoss(gm);
+                else if (scenario == "finalfx") StepFinalFx(gm);
+                else if (scenario == "boarding") StepBoarding(gm);
                 else if (scenario == "armrig_intro") StepArmRig(gm, false);
                 else if (scenario == "armrig_ending") StepArmRig(gm, true);
                 else if (scenario == "armscan_intro") StepArmScan(gm, false);
                 else if (scenario == "armscan_ending") StepArmScan(gm, true);
-                else if (scenario == "finalstand") StepFinalStand(gm, true);
-                else if (scenario == "finalpassive") StepFinalStand(gm, false);
+                else if (scenario == "finalstand") StepFinalStand(gm, 1);
+                else if (scenario == "finalspam") StepFinalStand(gm, 2);
+                else if (scenario == "finalpassive") StepFinalStand(gm, 0);
                 else if (scenario == "econ") StepEcon(gm);
                 else if (scenario == "reson") StepReson(gm);
                 else if (scenario == "pizza") StepPizza(gm);
@@ -1328,6 +1334,24 @@ namespace PokaGoryu.EditorTools
             }
             // вторая часть: поза нападения (Тень тянет руки, Гаситель раскручивается, Пожиратель жуёт), укус и гибель
             int t1 = t0 + 20 + 12 * 12 + 10;
+            // лицо Тени вплотную в покое и в нападении: снимаем оттуда, куда смотрит голова (она следит за героем и доворачивается сама)
+            if (frame == 226 || frame == t1 + 30)
+            {
+                Enemy e = monsterList[0];
+                if (e != null)
+                {
+                    Transform headT = null;
+                    foreach (Transform tr in e.GetComponentsInChildren<Transform>()) if (tr.name == "Head") { headT = tr; break; }
+                    if (headT != null)
+                    {
+                        Vector3 target = headT.TransformPoint(new Vector3(0f, 0.25f, 0.43f));
+                        Vector3 eye = headT.TransformPoint(new Vector3(0f, 0.32f, 1.9f));
+                        monsterLight.Pos = eye + new Vector3(0f, 0.8f, 0f) + (target - eye).normalized * 0.5f;
+                        monsterLight.Intensity = 0.30f;
+                        CaptureAt(gm, frame == 226 ? "w9_shade_face" : "a6_shade_face_attack", eye, target);
+                    }
+                }
+            }
             // Пожиратель с шести метров: три четверти слева, сбоку и сзади (рога, рёбра, жвала, шипы на щупальцах)
             if (frame == 230 || frame == 234 || frame == 238)
             {
@@ -1430,6 +1454,365 @@ namespace PokaGoryu.EditorTools
             Vector3 p = tgt - new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * dist;
             p.y = 0.1f;
             return p;
+        }
+
+        /// <summary>
+        /// Без окна: герой идёт на стоящего на пути человека. Сначала со старым поведением (слой людей не исключён: герой упирается в человека),
+        /// потом с настоящим (проходит сквозь него). Шаги героя — тот же Cc.Move, что делает PlayerController.UpdateMove. Человек стоит в
+        /// 1,8 м от старта героя; в отчёт идёт, сколько метров герой прошёл в каждом случае.
+        /// </summary>
+        static void StepSurvivorPass(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            if (frame == 3) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
+            if (frame < 5) return;
+            gm.Hero.Life = 100f;
+            int f = frame - 5;
+            Vector3 spot = jamSpot;
+            if (f == 0)
+            {
+                spot = FindOpenSpot(9f);
+                jamSpot = spot;
+                Survivor s = Survivor.All[0];
+                s.Relocate(spot + new Vector3(0f, 0f, -2.2f));
+                report.AppendLine("spot " + spot.ToString("F1") + ", survivor at +1.8 m ahead of the hero, excludeLayers=" + pc.Cc.excludeLayers.value);
+            }
+            Vector3 start = spot + new Vector3(0f, 0.1f, -4f);
+            if (f == 0 || f == 100) { pc.TeleportTo(start, 0f); SetPitch(pc, 0f); }
+            if (f == 0) pc.Cc.excludeLayers = 0;   // старое поведение: люди — обычное препятствие
+            if (f == 100) pc.Cc.excludeLayers = 1 << Survivor.Layer;
+            bool walking = (f >= 3 && f < 93) || (f >= 103 && f < 193);
+            if (walking) pc.Cc.Move(new Vector3(0f, -2f, 4.2f) * Time.deltaTime);
+            if (f == 95) report.AppendLine("old behaviour: the hero stopped " + (pc.transform.position.z - start.z).ToString("F2") + " m from the start (the survivor stands at 1.80 m)");
+            if (f == 195)
+            {
+                float went = pc.transform.position.z - start.z;
+                report.AppendLine("fixed behaviour: the hero went " + went.ToString("F2") + " m (90 frames at 4.2 m/s = 6.3 m if nothing stops him)");
+                if (went < 4.5f) { errors++; report.AppendLine("[smoke] BAD: the hero did not pass the survivor"); }
+                Finish("OK", errors > 0 ? 2 : 0);
+            }
+        }
+
+        /// <summary>
+        /// Без окна: глаза Пожирателя следят за тем, кого он преследует. Оглушённый Пожиратель стоит лицом к герою, рядом проснувшийся человек:
+        /// сперва в 6 м справа от линии на героя, потом слева (глаза уходят в сторону, а не на героя), потом человека усыпляют (глаза
+        /// возвращаются на героя). Кадры e1_prey_right, e2_prey_left, e3_hero: камера прямо перед лицом, на месте героя.
+        /// </summary>
+        static void StepEaterLook(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            if (frame == 3) { gm.State = GameState.Playing; gm.Hero.Life = 100f; }
+            if (frame < 5) return;
+            gm.Hero.Life = 100f;
+            int f = frame - 5;
+            if (f == 0)
+            {
+                Vector3 spot = FindOpenSpot(14f);
+                jamSpot = spot;
+                monsterLight = new EndingLight { Radius = 9f, Intensity = 0.32f, Col = new Color(1f, 0.93f, 0.82f, 1f) };
+                LightField.Register(monsterLight);
+                pc.TeleportTo(spot + new Vector3(0f, 0.1f, -6.6f), 0f);
+                SetPitch(pc, 0f);
+                monsterList.Clear();
+                monsterList.Add(Enemy.Spawn(EnemyKind.Eater, spot));
+            }
+            Vector3 center = jamSpot;
+            Enemy eater = monsterList.Count > 0 ? monsterList[0] : null;
+            if (eater == null) return;
+            // Пожиратель стоит на месте лицом к герою (-Z)
+            eater.Stun(5f);
+            eater.Health = 9999f;
+            eater.transform.position = center;
+            FieldInfo yawField = typeof(Enemy).GetField("yaw", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (yawField != null) yawField.SetValue(eater, 180f);
+            eater.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+
+            Survivor prey = Survivor.All[0];
+            Vector3 preyRight = center + new Vector3(3.2f, 0f, -6.0f);
+            Vector3 preyLeft = center + new Vector3(-3.2f, 0f, -6.0f);
+            if (f >= 5 && f < 145) prey.Relocate(f < 95 ? preyRight : preyLeft);
+            if (f == 10) prey.Wake();
+            if (f == 145) prey.ResetToInitial();
+
+            Vector3 face = center + new Vector3(0f, 3.2f, -1.6f);
+            Vector3 eye = face + new Vector3(0f, 0.4f, -5.0f);
+            monsterLight.Pos = eye + new Vector3(0f, 0.8f, 0f) + (face - eye).normalized * 0.5f;
+            if (f == 80) CaptureAt(gm, "e1_prey_right", eye, face);
+            if (f == 140) CaptureAt(gm, "e2_prey_left", eye, face);
+            if (f == 200)
+            {
+                CaptureAt(gm, "e3_hero", eye, face);
+                report.AppendLine("eater look target at the end: " + eater.LookTarget.ToString("F1") + " (the hero's camera is at " + pc.Cam.transform.position.ToString("F1") + ")");
+                Finish("OK", errors > 0 ? 2 : 0);
+            }
+        }
+
+        /// <summary>
+        /// Без окна: Великий Гаситель кадрами. Двигатель заведён, босс прилетает за 3 с, дальше по очереди: прилёт издалека и вблизи, броня
+        /// (из глаз героя, спереди, сзади), раскрытое ядро (из глаз, спереди, сбоку), копьё целится и бьёт, три фазы и гибель в четырёх кадрах.
+        /// Кадры b01..b17. Остальных врагов в минуте нет (давление выключено), копья по герою не наносят вреда (свет 100 каждый кадр).
+        /// </summary>
+        static void StepBoss(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            Bus bus = Bus.Instance;
+            if (frame == 3)
+            {
+                gm.State = GameState.Playing;
+                GameDifficulty.Mode = Challenge.Standard;
+                GameConfig.BossArriveDelay = 0.2f;
+                GameConfig.BossFlyTime = 3f;
+                GameConfig.ShadesBase = GameConfig.ShadesPerDistrict = GameConfig.ShadesTide = GameConfig.ShadesFinal = 0;
+                GameConfig.SpawnIntervalMin = GameConfig.SpawnIntervalMax = GameConfig.SnufferIntervalMin = GameConfig.SnufferIntervalMax = 10000f;
+            }
+            if (frame < 5) return;
+            gm.Hero.Life = 100f;
+            int f = frame - 5;
+            if (f == 0)
+            {
+                Enemy.ClearAll();
+                Vector3 door = bus.DoorPos;
+                pc.TeleportTo(new Vector3(door.x, 0.1f, door.z), 270f);
+                bus.Feed(GameConfig.BusNeed + 1f);
+                report.AppendLine("door " + door.ToString("F1") + ", bus " + bus.State + ", final stand " + gm.Dir.FinalStand);
+                // высоты домов вокруг площади вокзала: босс должен пролететь над ними
+                CellRect st = CityMap.Station;
+                StringBuilder around = new StringBuilder();
+                for (int cz = st.Z0 - 1; cz <= st.Z1 + 1; cz += 2)
+                {
+                    around.Append("  z" + cz + ":");
+                    for (int cx = Mathf.Max(0, st.X0 - 4); cx <= Mathf.Min(CityMap.W - 1, st.X1 + 4); cx++)
+                        around.Append(" " + LevelBuilder.BuildingHeight[cx, cz].ToString("0").PadLeft(2));
+                    around.AppendLine();
+                }
+                report.AppendLine("building heights (cells x " + Mathf.Max(0, st.X0 - 4) + ".., rows z " + (st.Z0 - 1) + ".." + (st.Z1 + 1) + "):");
+                report.Append(around.ToString());
+            }
+            Enemy boss = Enemy.FindBoss();
+            if (boss != null && !boss.IsBoss) boss = null;
+            // герой смотрит на босса (а когда его нет, на запад)
+            if (boss != null && f < 600)
+            {
+                Vector3 eye = pc.EyePos;
+                Vector3 to = boss.transform.position - eye;
+                float hor = new Vector2(to.x, to.z).magnitude;
+                SetYaw(pc, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg);
+                SetPitch(pc, -Mathf.Atan2(to.y, hor) * Mathf.Rad2Deg);
+            }
+            if (f == 12) report.AppendLine("boss at f=12: " + (boss != null ? boss.transform.position.ToString("F1") + " parts " + boss.BodyParts + " hp " + boss.Health.ToString("F0") : "none"));
+            if (f == 40) Capture("b01_arrive_far");
+            if (f == 100) Capture("b02_arrive_mid");
+            if (f == 165) Capture("b03_arrive_near");
+            if (f == 200 && boss != null)
+            {
+                report.AppendLine("f=200: mode " + boss.BossState + ", anchor " + boss.BossAnchor.ToString("F1") + ", boss " + boss.transform.position.ToString("F1")
+                    + ", distance to the hero " + Vector3.Distance(boss.transform.position, pc.EyePos).ToString("F1") + " m");
+                Capture("b04_armored_hero");
+                Vector3 c = boss.transform.position;
+                Vector3 fwd = boss.transform.forward;
+                Vector3 right = boss.transform.right;
+                CaptureAt(gm, "b05_armored_front", c + fwd * 22f + Vector3.up * 1.5f, c);
+                CaptureAt(gm, "b06_armored_back", c - fwd * 25f + Vector3.up * 4f, c);
+                CaptureAt(gm, "b07_armored_side", c + right * 27f + Vector3.up * 1f, c);
+            }
+            if (f == 215 && boss != null) boss.DebugBossMode(BossMode.Open);
+            if (f == 250 && boss != null)
+            {
+                report.AppendLine("f=250: mode " + boss.BossState + " open " + boss.BossOpenAmount.ToString("F2") + " exposed " + boss.CoreExposed);
+                Capture("b08_open_hero");
+                Vector3 c = boss.transform.position;
+                Vector3 fwd = boss.transform.forward;
+                Vector3 right = boss.transform.right;
+                CaptureAt(gm, "b09_open_front", c + fwd * 20f + Vector3.up * 1f, c);
+                CaptureAt(gm, "b10_open_side", c + right * 24f + fwd * 5f + Vector3.up * 1.5f, c);
+                CaptureAt(gm, "b11_open_close", c + fwd * 13f + Vector3.up * 0.5f, c);
+            }
+            if (f == 265 && boss != null) boss.DebugBossMode(BossMode.Armored);
+            if (f == 265 + 72 + 56 && boss != null)
+            {
+                report.AppendLine("f=" + f + ": lance stage " + boss.LanceStage + ", time left " + boss.LanceTimeLeft.ToString("F2") + " s, locked " + boss.LanceLocked);
+                Capture("b12_lance_aim");
+            }
+            if (f == 265 + 72 + 72 + 6 && boss != null)
+            {
+                report.AppendLine("f=" + f + ": lance stage " + boss.LanceStage + ", fired " + boss.LancesFired + ", hit " + boss.LancesHit);
+                Capture("b13_lance_strike");
+                Vector3 mid = (boss.LanceOrigin + boss.LanceTip) * 0.5f;
+                Vector3 side = Vector3.Cross((boss.LanceTip - boss.LanceOrigin).normalized, Vector3.up).normalized;
+                CaptureAt(gm, "b13b_lance_side", mid + side * 22f + Vector3.up * 2f, mid);
+            }
+            // три фазы и гибель: ядро открывается принудительно, один выстрел опустошает треть
+            int[] openAt = { 440, 490, 540 };
+            for (int p = 0; p < openAt.Length && boss != null; p++)
+            {
+                if (f == openAt[p]) boss.DebugBossMode(BossMode.Open);
+                if (f == openAt[p] + 30)
+                {
+                    float before = boss.Health;
+                    boss.ShotHit(999f);
+                    report.AppendLine("phase " + (p + 1) + " shot: hp " + before.ToString("F0") + " -> " + boss.Health.ToString("F0") + ", phase " + boss.BossPhase + ", mode " + boss.BossState + ", core damage " + boss.CoreDamage.ToString("F0"));
+                }
+            }
+            if (f == 575) Capture("b14_death_a");
+            if (f == 620) Capture("b15_death_b");
+            if (f == 690) Capture("b16_death_c");
+            if (f == 780)
+            {
+                Capture("b17_death_d");
+                report.AppendLine("boss alive: " + (Enemy.FindBoss() != null) + ", defeated flag " + gm.Dir.BossDefeated + ", bosses killed " + gm.BossesKilled + ", orbs flying " + LightOrb.All.Count);
+                Finish("OK", errors > 0 ? 2 : 0);
+            }
+        }
+
+        /// <summary>
+        /// Без окна: экранные эффекты последней минуты кадрами (финальная минута с боссом, прилёт сокращён). x01 запуск двигателя (волна и вспышка каёмки),
+        /// x01b волна чуть позже, x02 спокойная минута (угольки, тёплая каёмка), x03 прилёт босса, x04 броня, x05 копьё целится (фиолетовая каёмка),
+        /// x06 удар по герою (волна, хроматика), x07 ядро открыто (оранжевое зарево, свечение), x08 мало света (красная каёмка), x09 секунды в конце
+        /// (вспышка), x10 гибель босса (большая волна). В отчёте уровень эффектов и поля LowRes в каждом кадре.
+        /// </summary>
+        static void StepFinalFx(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            Bus bus = Bus.Instance;
+            LowRes lr = LowRes.Instance;
+            if (frame == 3)
+            {
+                gm.State = GameState.Playing;
+                GameDifficulty.Mode = Challenge.Standard;
+                GameConfig.BossArriveDelay = 1.5f;
+                GameConfig.BossFlyTime = 3f;
+                GameConfig.ShadesBase = GameConfig.ShadesPerDistrict = GameConfig.ShadesTide = GameConfig.ShadesFinal = 0;
+                GameConfig.SpawnIntervalMin = GameConfig.SpawnIntervalMax = GameConfig.SnufferIntervalMin = GameConfig.SnufferIntervalMax = 10000f;
+            }
+            if (frame < 5) return;
+            int f = frame - 5;
+            if (f < 700 || f > 724) gm.Hero.Life = 100f;
+            if (f == 700) gm.Hero.Life = 12f;
+            if (f == 0)
+            {
+                Enemy.ClearAll();
+                Vector3 door = bus.DoorPos;
+                pc.TeleportTo(new Vector3(door.x, 0.1f, door.z), 270f);
+                SetPitch(pc, -4f);
+                bus.Feed(GameConfig.BusNeed + 1f);
+            }
+            Enemy boss = Enemy.FindBoss();
+            if (boss != null && f >= 150 && f < 940)
+            {
+                Vector3 eye = pc.EyePos;
+                Vector3 to = boss.transform.position - eye;
+                float hor = new Vector2(to.x, to.z).magnitude;
+                SetYaw(pc, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg);
+                SetPitch(pc, -Mathf.Atan2(to.y, hor) * Mathf.Rad2Deg);
+            }
+            string[] names = { "x01_engine_kick", "x01b_engine_ring", "x02_minute_calm", "x03_boss_arrive", "x04_armored", "x05_lance_aim", "x06_lance_hit", "x07_core_open", "x08_low_light", "x09_countdown", "x10_boss_death" };
+            int[] at = { 2, 14, 100, 200, 300, 400, 418, 640, 720, 0, 0 };
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (at[i] > 0 && f == at[i])
+                {
+                    Capture(names[i]);
+                    FinalScreenFx fx = FinalScreenFx.Instance;
+                    report.AppendLine("  " + names[i] + ": fx level " + (fx != null ? fx.Level.ToString("F2") : "?") + " pulse " + (fx != null ? fx.Pulse.ToString("F2") : "?") + ", tint " + lr.FinalTint.ToString("F2")
+                        + ", vignette " + lr.Vignette.ToString("F2") + ", embers " + lr.Embers.ToString("F2") + ", chroma+ " + lr.ChromaBoost.ToString("F2") + ", ripple " + lr.Ripple.ToString("F2")
+                        + ", zoom " + lr.Zoom.ToString("F3") + ", bloom " + lr.Bloom.ToString("F2") + ", glitch+ " + lr.ExtraGlitch.ToString("F2")
+                        + (boss != null ? ", boss " + boss.BossState + " lance " + boss.LanceStage + " charge " + boss.LanceCharge.ToString("F2") : ""));
+                }
+            }
+            // секунды в конце: за 8 секунд до отъезда (первая граница через три кадра) и кадр сразу после неё
+            if (f == 760) bus.FinalLeft = 8.05f;
+            if (f == 766)
+            {
+                Capture("x09_countdown");
+                FinalScreenFx fx = FinalScreenFx.Instance;
+                report.AppendLine("  x09_countdown: left " + bus.FinalLeft.ToString("F2") + ", tint " + lr.FinalTint.ToString("F2") + ", ripple " + lr.Ripple.ToString("F2") + ", chroma+ " + lr.ChromaBoost.ToString("F2"));
+            }
+            // гибель босса
+            if (f == 800 && boss != null) boss.DebugBossMode(BossMode.Open);
+            if (f == 830 && boss != null) boss.ShotHit(999f);
+            if (f == 831 && boss != null) boss.DebugBossMode(BossMode.Open);
+            if (f == 861 && boss != null) boss.ShotHit(999f);
+            if (f == 862 && boss != null) boss.DebugBossMode(BossMode.Open);
+            if (f == 892 && boss != null) boss.ShotHit(999f);
+            if (f == 898)
+            {
+                Capture("x10_boss_death");
+                report.AppendLine("  x10_boss_death: boss alive " + (Enemy.FindBoss() != null) + ", ripple " + lr.Ripple.ToString("F2") + ", tint " + lr.FinalTint.ToString("F2") + ", chroma+ " + lr.ChromaBoost.ToString("F2"));
+            }
+            if (f == 1100)
+            {
+                // после минуты эффектов на экране нет
+                bus.FinalLeft = 0.02f;
+            }
+            if (f == 1130)
+            {
+                report.AppendLine("after the minute: bus " + bus.State + ", fx level " + (FinalScreenFx.Instance != null ? FinalScreenFx.Instance.Level.ToString("F2") : "?") + ", tint " + lr.FinalTint.ToString("F2") + ", embers "
+                    + lr.Embers.ToString("F2") + ", vignette " + lr.Vignette.ToString("F2") + ", state " + gm.State);
+                Finish("OK", errors > 0 ? 2 : 0);
+            }
+        }
+
+        /// <summary>
+        /// Без окна: начало концовки, герой забегает в автобус. Кадры b00.. по времени посадки (в имени время в десятых секунды), перемотка DebugSeek
+        /// на 12 кадров раньше нужного момента, чтобы кадр пришёлся ровно на него. В отчёте: путь глаз (положение в системе автобуса, курс, скорость
+        /// по шагам 0.1 с), видимость кузова, затемнение, расстояние от пути до людей в салоне. PG_BOARD_TIMES="0.5,1.0,..." подменяет список времён.
+        /// </summary>
+        static void StepBoarding(GameManager gm)
+        {
+            PlayerController pc = gm.Player;
+            float[] times = { 0.3f, 0.9f, 1.5f, 2.1f, 2.55f, 2.8f, 2.9f, 3.1f, 3.5f, 4.0f, 4.5f, 4.9f, 5.3f, 5.6f, 6.3f };
+            string custom = Environment.GetEnvironmentVariable("PG_BOARD_TIMES");
+            if (!string.IsNullOrEmpty(custom))
+            {
+                string[] parts = custom.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                times = new float[parts.Length];
+                for (int i = 0; i < parts.Length; i++) times[i] = float.Parse(parts[i], System.Globalization.CultureInfo.InvariantCulture);
+            }
+            if (frame == 3)
+            {
+                gm.State = GameState.Playing;
+                gm.Hero.Life = 100f;
+            }
+            if (frame == 6)
+            {
+                if (Bus.Instance != null) Bus.Instance.BoardedCount = 6;
+                gm.Win();
+                report.AppendLine("after Win: state=" + gm.State + " ending active=" + gm.Ending.Active + " boarding=" + gm.Ending.Boarding + " TBoard=" + EndingDirector.TBoard + " TKitchen=" + EndingDirector.TKitchen);
+                Vector3 prev = Vector3.zero;
+                float worstJump = 0f;
+                float prevSpeed = 0f;
+                for (float tt = 0f; tt <= EndingDirector.TBoard + 0.001f; tt += 0.1f)
+                {
+                    Vector3 p;
+                    float yaw, pit;
+                    EndingDirector.BoardPose(tt, out p, out yaw, out pit);
+                    float speed = tt > 0.05f ? (p - prev).magnitude / 0.1f : 0f;
+                    if (tt > 0.15f) worstJump = Mathf.Max(worstJump, Mathf.Abs(speed - prevSpeed));
+                    report.AppendLine("  path t=" + tt.ToString("F1") + " pos=(" + p.x.ToString("F2") + ", " + p.y.ToString("F2") + ", " + p.z.ToString("F2") + ") yaw=" + yaw.ToString("F0") + " pit=" + pit.ToString("F1") + " speed=" + speed.ToString("F2"));
+                    prev = p;
+                    prevSpeed = speed;
+                }
+                report.AppendLine("  worst speed change between 0.1 s steps: " + worstJump.ToString("F2") + " m/s; nearest resident to the path inside the cabin: " + gm.Ending.BoardingClearance().ToString("F2") + " m");
+            }
+            if (frame < 10) return;
+            int slot = (frame - 10) / 16;
+            int phase = (frame - 10) % 16;
+            if (slot >= times.Length)
+            {
+                if (frame - (10 + times.Length * 16) == 0) Finish("OK", errors > 0 ? 2 : 0);
+                return;
+            }
+            gm.Hero.Life = 100f;
+            if (phase == 0) gm.Ending.DebugSeek(Mathf.Max(0f, times[slot] - 12f / 60f));
+            if (phase == 12)
+            {
+                string name = "b" + slot.ToString("00") + "_t" + Mathf.RoundToInt(times[slot] * 10f).ToString("000");
+                Bus bus = Bus.Instance;
+                Vector3 cam = pc.Cam.transform.position - bus.StartPos;
+                report.AppendLine(name + " elapsed=" + gm.Ending.Elapsed.ToString("F2") + " camera(local)=(" + cam.x.ToString("F2") + ", " + cam.y.ToString("F2") + ", " + cam.z.ToString("F2") + ") yaw=" + pc.Cam.transform.eulerAngles.y.ToString("F0")
+                    + " fov=" + pc.Cam.fieldOfView.ToString("F0") + " exterior=" + bus.ExteriorVisible + " busLight=" + bus.LightRadius.ToString("F0") + "/" + bus.LightIntensity.ToString("F2") + " boarding=" + gm.Ending.Boarding);
+                Capture(name);
+            }
         }
 
         static Vector3 jamSpot;
@@ -1886,6 +2269,8 @@ namespace PokaGoryu.EditorTools
         }
 
         static int standKills0;
+        static float standBossKillT = -1f;
+        static bool standBossSeen;
         static float standMinLife = 999f;
         static int standMaxEnemies;
 
@@ -1896,36 +2281,58 @@ namespace PokaGoryu.EditorTools
         }
 
         /// <summary>
-        /// Без окна: последняя минута у автобуса целиком (3600 кадров по 1/60 с). Герой стоит в кольце у двери, двигатель заведён.
-        /// «finalstand» — умелый герой: аура на минимуме, бьёт Пожирателей и Теней выстрелами с идеальной меткостью, осколки в радиусе 22 м
-        /// подбирает сразу (потолок мастерства); «finalpassive» — стоит и ничего не делает (низ). Настоящий игрок между ними.
-        /// Отчёт каждые 5 с: свет, враги, осколки; в конце: уехал ли автобус, сколько света, сколько ушло на выстрелы и пришло осколками.
+        /// Без окна: последняя минута у автобуса целиком (3600 кадров по 1/60 с). Герой стоит в кольце у двери, двигатель заведён, Великий
+        /// Гаситель прилетает по-настоящему (BossArriveDelay + BossFlyTime). Три героя:
+        /// «finalstand» — умелый: аура на минимуме, осколки подбирает сразу, бьёт в ядро, только пока оно открыто (броня глотает выстрелы),
+        /// по Теням стреляет, лишь когда те вплотную, и уходит с линии копья через 0.2 с после того, как она замерла, потом возвращается к двери;
+        /// «finalspam» — стреляет по боссу всегда, как только тот в досягаемости, и стоит на месте (цена расточительности);
+        /// «finalpassive» — стоит и ничего не делает (низ). Настоящий игрок между ними.
+        /// Свет в начале задаёт PG_FS_LIGHT (по умолчанию 100; у настоящего героя после зарядки автобуса его меньше, обычно 30-60).
+        /// Отчёт каждые 5 с: свет, враги, босс (фаза, здоровье, копья); в конце: уехал ли автобус, погиб ли босс и когда, сколько света ушло
+        /// на выстрелы и пришло осколками, сколько выстрелов проглотила броня.
         /// </summary>
-        static void StepFinalStand(GameManager gm, bool gunner)
+        static void StepFinalStand(GameManager gm, int mode)
         {
             PlayerController pc = gm.Player;
             Bus bus = Bus.Instance;
-            if (frame == 3) gm.State = GameState.Playing;
+            string[] names = { "passive hero", "skilled gunner: shoots the open core only, dodges the lance", "spammer: shoots the boss all the time, never moves" };
+            if (frame == 3)
+            {
+                gm.State = GameState.Playing;
+                GameDifficulty.Mode = Challenge.Standard;
+            }
             if (frame < 5) return;
             if (frame == 5)
             {
                 Enemy.ClearAll();
-                gm.Hero.Life = 100f;
+                float startLight = 100f;
+                string lightText = Environment.GetEnvironmentVariable("PG_FS_LIGHT");
+                if (!string.IsNullOrEmpty(lightText)) float.TryParse(lightText, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out startLight);
+                gm.Hero.Life = startLight;
                 Vector3 door = bus.DoorPos;
                 pc.TeleportTo(new Vector3(door.x, 0.1f, door.z), 270f);
                 bus.Feed(GameConfig.BusNeed + 1f);   // двигатель заведён: минута пошла
                 standKills0 = gm.EnemiesKilled;
-                report.AppendLine("final stand (" + (gunner ? "gunner with perfect aim" : "passive hero") + "): length " + bus.StandLength.ToString("F0")
-                    + " s, bus " + bus.State + ", hero " + pc.transform.position.ToString("F1") + ", eater every " + GameConfig.FinalEaterInterval.ToString("F0")
-                    + " s, pressure +" + GameConfig.FinalPressure.ToString("F1") + ", extra shades " + GameConfig.ShadesFinal);
+                standBossKillT = -1f;
+                report.AppendLine("final stand (" + names[mode] + "): start light " + startLight.ToString("F0") + ", length " + bus.StandLength.ToString("F0")
+                    + " s, bus " + bus.State + ", hero " + pc.transform.position.ToString("F1") + ", boss " + (GameConfig.BossEnabled ? "arrives at " + GameConfig.BossArriveDelay.ToString("F0")
+                    + " s, flies " + GameConfig.BossFlyTime.ToString("F0") + " s, hp " + (GameConfig.BossHealth * GameDifficulty.BossScale).ToString("F0") : "off (eater every " + GameConfig.FinalEaterInterval.ToString("F0") + " s)")
+                    + ", pressure +" + GameConfig.FinalPressure.ToString("F1") + ", extra shades " + GameConfig.ShadesFinal);
                 return;
             }
             float t = (frame - 6) / 60f;
             if (gm.Hero.Life < standMinLife) standMinLife = gm.Hero.Life;
             int enemies = Enemy.All.Count;
             if (enemies > standMaxEnemies) standMaxEnemies = enemies;
+            Enemy boss = Enemy.FindBoss();
+            if (boss != null) standBossSeen = true;
+            if (standBossKillT < 0f && gm.BossesKilled > 0)
+            {
+                standBossKillT = t;
+                report.AppendLine("  >>> the boss is dead at t=" + t.ToString("F1") + " s, hero light " + gm.Hero.Life.ToString("F0"));
+            }
 
-            if (gunner && bus.State == Bus.Mode.Running && gm.State == GameState.Playing)
+            if (mode != 0 && bus.State == Bus.Mode.Running && gm.State == GameState.Playing)
             {
                 gm.Hero.AuraTarget = GameConfig.AuraMin;   // умелый игрок гасит ауру: она съедает больше всего света
                 // осколки подбирает сразу (на самом деле — шаг-два от круга и вдох на E)
@@ -1935,56 +2342,110 @@ namespace PokaGoryu.EditorTools
                     LightOrb o = LightOrb.All[i];
                     if (o != null && !o.Collected && (o.transform.position - chest).magnitude < 22f) o.Collect();
                 }
-                // цель: Пожиратель (его свет автобуса не жжёт), Тени — только те, что подобрались вплотную; Гасители героя не трогают.
-                // Остальные Тени сгорают в свете автобуса сами: тратить на них выстрелы невыгодно.
                 Vector3 eye = pc.EyePos;
                 Enemy best = null;
-                float bestScore = 1e9f;
-                for (int i = 0; i < Enemy.All.Count; i++)
+                Vector3 aimPoint = Vector3.zero;
+                // босс: умелый бьёт только открытое ядро, спамер всегда, пока тот в досягаемости
+                if (boss != null && (mode == 2 || boss.CoreExposed) && Vector3.Distance(eye, boss.Center) < GameConfig.CombatRange * 0.95f
+                    && !Physics.Linecast(eye, boss.Center, ~0, QueryTriggerInteraction.Ignore))
                 {
-                    Enemy e = Enemy.All[i];
-                    if (e == null || e.Health <= 0f || e.Kind == EnemyKind.Snuffer) continue;
-                    Vector3 d = e.transform.position - eye;
-                    d.y = 0f;
-                    float dist = d.magnitude;
-                    if (e.Kind == EnemyKind.Shade && dist > 5f) continue;
-                    if (dist > GameConfig.CombatRange * 0.9f || !CityMap.LineClear(eye.x, eye.z, e.transform.position.x, e.transform.position.z, 0.15f, false)) continue;
-                    // автобус, машины и дома закрывают луч: по такой цели умелый игрок не стреляет
-                    if (Physics.Linecast(eye, e.transform.position + Vector3.up * 1.2f, ~0, QueryTriggerInteraction.Ignore)) continue;
-                    float score = dist - (e.Kind == EnemyKind.Eater ? 100f : 0f);
-                    if (score < bestScore) { bestScore = score; best = e; }
+                    best = boss;
+                    aimPoint = boss.Center;
+                }
+                else
+                {
+                    // Пожиратель (его свет автобуса не жжёт), Тени — только те, что подобрались вплотную; Гасители героя не трогают.
+                    // Остальные Тени сгорают в свете автобуса сами: тратить на них выстрелы невыгодно.
+                    float bestScore = 1e9f;
+                    for (int i = 0; i < Enemy.All.Count; i++)
+                    {
+                        Enemy e = Enemy.All[i];
+                        if (e == null || e.Health <= 0f || e.Kind == EnemyKind.Snuffer || e.Kind == EnemyKind.Boss) continue;
+                        Vector3 d = e.transform.position - eye;
+                        d.y = 0f;
+                        float dist = d.magnitude;
+                        if (e.Kind == EnemyKind.Shade && dist > 5f) continue;
+                        if (dist > GameConfig.CombatRange * 0.9f || !CityMap.LineClear(eye.x, eye.z, e.transform.position.x, e.transform.position.z, 0.15f, false)) continue;
+                        // автобус, машины и дома закрывают луч: по такой цели умелый игрок не стреляет
+                        if (Physics.Linecast(eye, e.transform.position + Vector3.up * 1.2f, ~0, QueryTriggerInteraction.Ignore)) continue;
+                        float score = dist - (e.Kind == EnemyKind.Eater ? 100f : 0f);
+                        if (score < bestScore) { bestScore = score; best = e; aimPoint = e.transform.position + Vector3.up * 1.2f; }
+                    }
                 }
                 if (best != null)
                 {
-                    Vector3 to = best.transform.position + Vector3.up * 1.2f - eye;
+                    Vector3 to = aimPoint - eye;
                     float hor = new Vector2(to.x, to.z).magnitude;
                     SetYaw(pc, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg);
                     SetPitch(pc, -Mathf.Atan2(to.y, hor) * Mathf.Rad2Deg);
                     if (frame % 3 == 0 && gm.Hero.Life > 8f) pc.Combat.FireShot();
                 }
+                else if (boss != null && mode == 1)
+                {
+                    // ждёт окна: смотрит на босса, не стреляя
+                    Vector3 to = boss.Center - eye;
+                    float hor = new Vector2(to.x, to.z).magnitude;
+                    SetYaw(pc, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg);
+                    SetPitch(pc, -Mathf.Atan2(to.y, hor) * Mathf.Rad2Deg);
+                }
+
+                // умелый: уходит с линии копья, когда она замерла, и возвращается к двери
+                if (mode == 1)
+                {
+                    Vector3 doorPos = bus.DoorPos;
+                    bool dodging = false;
+                    if (boss != null && boss.LanceStage == 1 && boss.LanceLockAge >= 0.2f)
+                    {
+                        Vector3 a = boss.LanceOrigin;
+                        Vector3 ab = boss.LanceTip - a;
+                        float k = Mathf.Clamp01(Vector3.Dot(chest - a, ab) / Mathf.Max(0.01f, ab.sqrMagnitude));
+                        Vector3 off = chest - (a + ab * k);
+                        off.y = 0f;
+                        if (off.magnitude < GameConfig.BossLanceRadius + 0.75f)
+                        {
+                            Vector3 dir = off.sqrMagnitude > 0.01f ? off.normalized : Vector3.Cross(ab, Vector3.up).normalized;
+                            Vector3 flat = pc.transform.position + dir * 1.5f - doorPos;
+                            flat.y = 0f;
+                            if (flat.magnitude > 6f) dir = -dir;
+                            pc.Cc.Move(dir * 4.2f * Time.deltaTime);
+                            dodging = true;
+                        }
+                    }
+                    if (!dodging)
+                    {
+                        Vector3 back = doorPos - pc.transform.position;
+                        back.y = 0f;
+                        if (back.magnitude > 1f) pc.Cc.Move(back.normalized * 3f * Time.deltaTime);
+                    }
+                }
             }
 
             if (frame % 300 == 6)
             {
+                string bossText = boss != null ? ", boss " + boss.BossState + " phase " + boss.BossPhase + " hp " + boss.Health.ToString("F0") + " lances " + boss.LancesHit + "/" + boss.LancesFired + " armor-eaten shots " + boss.ArmorHits
+                    : (standBossKillT >= 0f ? ", boss dead" : ", no boss yet");
                 report.AppendLine("  t=" + t.ToString("F0").PadLeft(2) + " s: left " + bus.FinalLeft.ToString("F0").PadLeft(2) + ", hero light " + gm.Hero.Life.ToString("F0").PadLeft(3)
                     + ", shades " + Enemy.CountOf(EnemyKind.Shade) + " snuffers " + Enemy.CountOf(EnemyKind.Snuffer) + " eaters " + Enemy.CountOf(EnemyKind.Eater)
                     + ", orbs " + LightOrb.All.Count + ", kills " + (gm.EnemiesKilled - standKills0)
-                    + ", spent on shots " + gm.Economy.Amount(LightReason.Shot, false, false).ToString("F0") + ", from orbs " + gm.Economy.Amount(LightReason.Orb, true, false).ToString("F0"));
+                    + ", spent on shots " + gm.Economy.Amount(LightReason.Shot, false, false).ToString("F0") + ", from orbs " + gm.Economy.Amount(LightReason.Orb, true, false).ToString("F0") + bossText);
             }
             if (frame == 6 + 600) Capture("fs_10s");
             if (frame == 6 + 3000) Capture("fs_50s");
 
+            string tail = ", kills " + (gm.EnemiesKilled - standKills0) + ", spent on shots " + gm.Economy.Amount(LightReason.Shot, false, false).ToString("F0")
+                + ", from orbs " + gm.Economy.Amount(LightReason.Orb, true, false).ToString("F0")
+                + (boss != null ? ", boss left alive: phase " + boss.BossPhase + " hp " + boss.Health.ToString("F0") + ", core damage " + boss.CoreDamage.ToString("F0") + ", shots eaten by the armor " + boss.ArmorHits + ", lances hit "
+                    + boss.LancesHit + " of " + boss.LancesFired : (standBossKillT >= 0f ? ", boss killed at " + standBossKillT.ToString("F1") + " s" : (standBossSeen ? ", boss still alive: it dissolved when the bus left" : ", boss never appeared")));
             if (gm.State == GameState.Dead)
             {
-                report.AppendLine("HERO DIED at t=" + t.ToString("F1") + " s (bus had " + bus.FinalLeft.ToString("F0") + " s left), kills " + (gm.EnemiesKilled - standKills0));
+                report.AppendLine("HERO DIED at t=" + t.ToString("F1") + " s (bus had " + bus.FinalLeft.ToString("F0") + " s left)" + tail);
                 Finish("OK", errors > 0 ? 2 : 0);
                 return;
             }
             if (bus.State != Bus.Mode.Running)
             {
                 report.AppendLine("BUS LEFT at t=" + t.ToString("F1") + " s, hero light " + gm.Hero.Life.ToString("F0") + " (lowest " + standMinLife.ToString("F0")
-                    + "), most enemies at once " + standMaxEnemies + ", kills " + (gm.EnemiesKilled - standKills0)
-                    + ", spent on shots " + gm.Economy.Amount(LightReason.Shot, false, false).ToString("F0") + ", from orbs " + gm.Economy.Amount(LightReason.Orb, true, false).ToString("F0"));
+                    + "), most enemies at once " + standMaxEnemies + tail);
                 Finish("OK", errors > 0 ? 2 : 0);
                 return;
             }
@@ -2656,25 +3117,28 @@ namespace PokaGoryu.EditorTools
         static void StepEnding(GameManager gm, bool windowed)
         {
             float k0 = EndingDirector.TKitchen;
+            float tb = EndingDirector.TBoard;   // поездка начинается после посадки: её кадры задаём от неё
             string[] names;
             float[] times;
             if (windowed)
             {
                 // окно редактора: кадры с настоящими субтитрами, полосами и титулом (IMGUI), потом экран итога
-                names = new string[] { "s01_ride_caption", "s02_ride_flicker", "s03_ride_trap", "s04_kitchen_wake", "s05_kitchen_coffee", "s06_kitchen_warm", "s07_kitchen_wet", "s08_kitchen_saved", "s09_title" };
-                times = new float[] { 1.8f, 12.2f, 14.4f, k0 + 2.0f, k0 + 4.4f, k0 + 13.0f, k0 + 18.5f, k0 + 22.6f, k0 + 28.0f };
+                names = new string[] { "s00_board_run", "s00b_board_inside", "s01_ride_caption", "s02_ride_flicker", "s03_ride_trap", "s04_kitchen_wake", "s05_kitchen_coffee", "s06_kitchen_warm", "s07_kitchen_wet", "s08_kitchen_saved", "s09_title" };
+                times = new float[] { 1.4f, 3.9f, tb + 1.8f, tb + 12.2f, tb + 14.4f, k0 + 2.0f, k0 + 4.4f, k0 + 13.0f, k0 + 18.5f, k0 + 22.6f, k0 + 28.0f };
             }
             else
             {
                 names = new string[]
                 {
+                    "e00_board_run", "e00b_board_door", "e00c_board_aisle",
                     "e01_ride_start", "e02_ride_left", "e03_ride_back", "e04_ride_dawn", "e05_ride_flicker", "e06_ride_gate", "e07_ride_dark", "e08_ride_engulf",
                     "e09_kitchen_sleep", "e10_kitchen_jolt", "e11_kitchen_rise", "e12_kitchen_window", "e13_kitchen_mug", "e14_kitchen_hands", "e15_kitchen_wet",
                     "e16_kitchen_wet2", "e17_kitchen_forward"
                 };
                 times = new float[]
                 {
-                    0.9f, 3.4f, 4.8f, 7.4f, 10.2f, 12.4f, 13.7f, 14.6f,
+                    1.3f, 3.0f, 4.3f,
+                    tb + 0.9f, tb + 3.4f, tb + 4.8f, tb + 7.4f, tb + 10.2f, tb + 12.4f, tb + 13.7f, tb + 14.6f,
                     k0 + 0.6f, k0 + 1.4f, k0 + 2.0f, k0 + 2.9f, k0 + 4.6f, k0 + 7.6f, k0 + 10.8f,
                     k0 + 13.4f, k0 + 17.5f
                 };
@@ -2757,7 +3221,7 @@ namespace PokaGoryu.EditorTools
                 return;
             }
             gm.Hero.Life = 100f;
-            if (phase == 0) gm.Ending.DebugSeek(times[slot]);
+            if (phase == 0) gm.Ending.DebugSeek(EndingDirector.TBoard + times[slot]);   // времена списка — времена поездки (от посадки)
             if (phase == 12)
             {
                 string name = "r" + slot.ToString("00") + "_t" + Mathf.RoundToInt(times[slot] * 10f).ToString("0000");

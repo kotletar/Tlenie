@@ -20,7 +20,7 @@ namespace PokaGoryu
         static readonly Color Dim = new Color(0.66f, 0.62f, 0.58f, 1f);
 
         static readonly string[] TitleItems = { "ИГРАТЬ", "БЕСКОНЕЧНЫЙ ГОРОД", "РЕКОРДЫ", "КАК ИГРАТЬ", "НАСТРОЙКИ", "ВЫХОД" };
-        static readonly string[] PauseItems = { "ПРОДОЛЖИТЬ", "НАЧАТЬ ЗАНОВО", "КАК ИГРАТЬ", "НАСТРОЙКИ", "В ГЛАВНОЕ МЕНЮ", "ВЫЙТИ ИЗ ИГРЫ", "СВЕТ ЗА ЗАБЕГ" };
+        static readonly string[] PauseItems = { "ПРОДОЛЖИТЬ", "К ПОСЛЕДНЕМУ ОЧАГУ", "НАЧАТЬ ЗАНОВО", "КАК ИГРАТЬ", "НАСТРОЙКИ", "В ГЛАВНОЕ МЕНЮ", "ВЫЙТИ ИЗ ИГРЫ", "СВЕТ ЗА ЗАБЕГ" };
         static readonly string[] DeadItems = { "К ОЧАГУ  (R)", "В ГЛАВНОЕ МЕНЮ", "СВЕТ ЗА ЗАБЕГ" };
         static readonly string[] WinItems = { "СЫГРАТЬ СНОВА  (R)", "В ГЛАВНОЕ МЕНЮ", "СВЕТ ЗА ЗАБЕГ" };
         static readonly string[] SettingNames =
@@ -107,6 +107,13 @@ namespace PokaGoryu
             GameManager gm = GameManager.Instance;
             if (gm != null && gm.Endless)
             {
+                if (mode == Mode.Pause)
+                {
+                    // в бесконечном городе возврат из паузы тратит одно из возвращений: число видно на кнопке
+                    string[] pause = (string[])PauseItems.Clone();
+                    pause[1] = "К ОЧАГУ  (возвращений: " + gm.ReturnsLeft + ")";
+                    return pause;
+                }
                 if (mode == Mode.Victory)
                     return new string[] { "ДАЛЬШЕ: ГОРОД " + (gm.City + 1) + "  (R)", "В ГЛАВНОЕ МЕНЮ", "СВЕТ ЗА ЗАБЕГ" };
                 if (mode == Mode.Dead)
@@ -222,11 +229,12 @@ namespace PokaGoryu
                     break;
                 case Mode.Pause:
                     if (i == 0) gm.SetPaused(false);
-                    else if (i == 1) gm.Restart();
-                    else if (i == 2) { page = Page.Help; sel = 0; }
-                    else if (i == 3) { page = Page.Settings; sel = 0; }
-                    else if (i == 4) gm.QuitToMenu();
-                    else if (i == 5) gm.QuitGame();
+                    else if (i == 1) gm.ReturnToHearth();   // застрял: вернуться к последнему очагу (в бесконечном городе тратится возвращение)
+                    else if (i == 2) gm.Restart();
+                    else if (i == 3) { page = Page.Help; sel = 0; }
+                    else if (i == 4) { page = Page.Settings; sel = 0; }
+                    else if (i == 5) gm.QuitToMenu();
+                    else if (i == 6) gm.QuitGame();
                     else { page = Page.Report; sel = 0; }
                     break;
                 case Mode.Dead:
@@ -471,7 +479,7 @@ namespace PokaGoryu
                     y0 = 250f;
                 }
             }
-            if (mode == Mode.Pause) y0 = 220f;
+            if (mode == Mode.Pause) { y0 = 214f; bh = 46f; gap = 8f; }   // восемь пунктов: теснее, чтобы поместились в экран
 
             if (mode == Mode.Dead || mode == Mode.Victory)
             {
@@ -538,6 +546,7 @@ namespace PokaGoryu
                     "Колесо мыши — радиус ауры\n" +
                     "Tab — посмотреть на себя\n" +
                     "Esc — пауза    - и = — яркость\n" +
+                    "Застряли? Esc, затем «К последнему очагу»\n" +
                     "Пробел — пропустить предысторию и концовку";
 
                 // один размер шрифта на обе колонки: самый крупный, при котором влезают оба текста

@@ -233,6 +233,7 @@ namespace PokaGoryu
             Approach(sleeper.FocusPoint, 2f);
             yield return new WaitForSecondsRealtime(0.2f);
             Check(gm.Player.FocusType == FocusKind.Sleeper, "gaze selects sleeping survivor");
+            GameConfig.BossEnabled = false;   // босс проверяется ниже отдельным блоком: иначе он прилетел бы посреди этих проверок
             input.Key(GKey.F, true);
             yield return new WaitForSecondsRealtime(1.5f);
             input.Key(GKey.F, false);
@@ -270,6 +271,31 @@ namespace PokaGoryu
             int footSteps = (int)footField.GetValue(gm.Player) - foot0;
             Check(footSteps >= 6 && footSteps <= 9, "footsteps follow the head bob: " + footSteps + " steps in 3 s of walking");
             yield return new WaitForSecondsRealtime(0.2f);
+
+            // Люди не загораживают героя (в тесных хранилищах света они обступали его и не давали выйти): человек стоит прямо на пути,
+            // герой идёт кнопкой W и проходит сквозь него.
+            {
+                Survivor blocker = null;
+                foreach (Survivor sv in Survivor.All) if (sv.IsAsleep) { blocker = sv; break; }
+                if (blocker != null)
+                {
+                    Vector3 origin = blocker.SpawnPos - Vector3.up * 0.1f;
+                    Vector3 s0 = LevelBuilder.StartPos;
+                    Vector3 inWay = new Vector3(s0.x, 0f, s0.z + 2.0f);
+                    blocker.Relocate(inWay);
+                    gm.Player.TeleportTo(s0, 0f);
+                    yield return null;
+                    input.Key(GKey.W, true);
+                    yield return new WaitForSecondsRealtime(1.3f);
+                    input.Key(GKey.W, false);
+                    float went = gm.Player.transform.position.z - s0.z;
+                    Check(went > 3.5f && Vector3.Distance(blocker.transform.position, inWay) < 0.3f,
+                        "a survivor standing in the way does not block the hero: he walks through (" + went.ToString("0.0") + " m of a free 5.5 m run, the survivor stays put)");
+                    blocker.Relocate(origin);
+                    yield return new WaitForSecondsRealtime(0.2f);
+                }
+                else Check(false, "there is a sleeping survivor to put in the hero's way");
+            }
 
             Growth wall = Growth.All[0];
             Vector3 target = wall.Center + Vector3.up * 2f;
@@ -419,8 +445,184 @@ namespace PokaGoryu
             Check(gm.State == GameState.Playing && gm.Hero.Life > 50f && gm.Economy.Amount(LightReason.Respawn, true, false) > 0,
                 "R respawns and accounts for restored light");
             Check(Math.Abs(gm.Economy.ExpectedLight - gm.Hero.Life) < 0.01, "ledger reconciles after respawn");
+            // «К последнему очагу» в паузе: выход, если застрял. Герой далеко от очага со светом 80: возвращается к контрольной точке, пауза
+            // снята, свет остаётся (не убавляют), возвращение засчитано, учёт света сходится; слабому герою добавляют до света возрождения
+            {
+                System.Reflection.BindingFlags nonPublic = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+                System.Reflection.MethodInfo activate = typeof(MenuUI).GetMethod("Activate", nonPublic);
+                string[] pauseItems = (string[])typeof(MenuUI).GetField("PauseItems", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).GetValue(null);
+                Check(pauseItems.Length > 1 && pauseItems[1].Contains("ОЧАГУ"), "the pause menu has a return-to-the-last-hearth button");
+                gm.Hero.SetLife(80f, LightReason.Debug);
+                gm.Player.TeleportTo(LevelBuilder.StationPos, 0f);
+                yield return null;
+                int deathsBefore = gm.Deaths;
+                gm.SetPaused(true);
+                yield return null; yield return null;
+                activate.Invoke(gm.Menu, new object[] { 1 });
+                yield return new WaitForSecondsRealtime(0.4f);
+                Check(gm.State == GameState.Playing && !gm.Paused && Time.timeScale == 1f
+                    && Vector3.Distance(gm.Player.transform.position, gm.Dir.CheckpointPos) < 1.5f && gm.Hero.Life > 79f && gm.Deaths == deathsBefore + 1
+                    && Math.Abs(gm.Economy.ExpectedLight - gm.Hero.Life) < 0.01,
+                    "pause -> the last-hearth button brings a stuck hero back to the checkpoint, unpauses, keeps his light and counts the return");
+                gm.Hero.SetLife(20f, LightReason.Debug);
+                gm.SetPaused(true);
+                yield return null; yield return null;
+                activate.Invoke(gm.Menu, new object[] { 1 });
+                yield return new WaitForSecondsRealtime(0.3f);
+                Check(gm.Hero.Life >= GameConfig.RespawnLight - 0.5f && Math.Abs(gm.Economy.ExpectedLight - gm.Hero.Life) < 0.01,
+                    "a weak hero is brought back with at least the respawn light (" + gm.Hero.Life.ToString("0") + ")");
+            }
             yield return new WaitForSecondsRealtime(0.9f);
             Check(!music.FinalTrackActive && music.FinalTrackLevel < 0.001f, "the track ends with the stand: the bus is back to idle and the stems return");
+            // Великий Гаситель: настоящая минута с коротким прилётом (0.3 с до появления, 1 с полёта). Броня глотает урон, открытое ядро берёт его
+            // с множителем и возвращает герою свет, копьё бьёт стоящего героя и не пробивает стену, три трети здоровья, гибель рассеивает остальных
+            {
+                float bsDelay = GameConfig.BossArriveDelay;
+                float bsFly = GameConfig.BossFlyTime;
+                GameConfig.BossEnabled = true;
+                GameConfig.BossArriveDelay = 0.3f;
+                GameConfig.BossFlyTime = 1.0f;
+                AudioListener.volume = 0f;   // босс гудит и рычит: пусть проверка не гремит из колонок
+                Enemy.ClearAll();
+                LightOrb.ClearAll();
+                Bus bsBus = Bus.Instance;
+                Vector3 bsDoor = bsBus.DoorPos;
+                gm.Player.TeleportTo(new Vector3(bsDoor.x, 0.1f, bsDoor.z), 270f);
+                gm.Hero.SetLife(100f, LightReason.Debug);
+                bsBus.Feed(GameConfig.BusNeed + 1f);   // двигатель заведён: режиссёр ждёт 0.3 с и выпускает босса
+                yield return new WaitForSecondsRealtime(0.7f);
+                Enemy bsBoss = Enemy.FindBoss();
+                Check(bsBoss != null && bsBoss.IsBoss && bsBoss.BossState == BossMode.Arrive && bsBoss.BodyParts >= 30 && Math.Abs(bsBoss.Health - GameConfig.BossHealth) < 0.1f
+                    && Enemy.CountOf(EnemyKind.Eater) == 0,
+                    "the final stand releases the Great Snuffer: " + (bsBoss != null ? bsBoss.BodyParts + " parts, health " + bsBoss.Health.ToString("0") + ", " + bsBoss.BossState : "none") + "; no eaters in that minute");
+                Check(gm.ObjectiveText().Contains("приближается"), "the objective line announces the approaching boss");
+                yield return new WaitForSecondsRealtime(1.0f);
+                bsBoss = Enemy.FindBoss();
+                {
+                    FinalScreenFx fxOn = FinalScreenFx.Instance;
+                    LowRes lrOn = LowRes.Instance;
+                    Check(fxOn != null && lrOn != null && fxOn.Level > 0.9f && lrOn.FinalTint.a > 0.04f && lrOn.Embers > 0.1f && lrOn.Vignette > LowRes.DefaultVignette + 0.3f,
+                        "the final minute turns the screen effects on: edge tint, embers, tighter vignette (level " + (fxOn != null ? fxOn.Level.ToString("0.00") : "?") + ", tint "
+                        + (lrOn != null ? lrOn.FinalTint.a.ToString("0.00") : "?") + ", embers " + (lrOn != null ? lrOn.Embers.ToString("0.00") : "?") + ")");
+                }
+                if (bsBoss == null) { Check(false, "the boss is gone before the armor tests"); }
+                else
+                {
+                    CellRect bsSt = CityMap.Station;
+                    Vector3 bsAn = bsBoss.BossAnchor;
+                    Check(bsBoss.BossState == BossMode.Armored && Vector3.Distance(bsBoss.transform.position, bsAn) < 4f
+                        && bsAn.x > bsSt.X0 * CityMap.Cell + 8f && bsAn.x < (bsSt.X1 + 1) * CityMap.Cell - 8f && bsAn.z > bsSt.Z0 * CityMap.Cell + 8f && bsAn.z < (bsSt.Z1 + 1) * CityMap.Cell - 8f
+                        && Vector3.Distance(bsBoss.transform.position, gm.Player.EyePos) < GameConfig.CombatRange,
+                        "the boss hovers over the station square within the beam's reach (" + Vector3.Distance(bsBoss.transform.position, gm.Player.EyePos).ToString("0.0") + " m from the hero)");
+                    // путь перелёта проходит выше крыш (ломаная из-за домов над краем площади)
+                    float bsWorst = 999f;
+                    for (int bsI = 0; bsI <= 80; bsI++)
+                    {
+                        Vector3 bsQ = bsBoss.BossPathPoint(bsI / 80f);
+                        int bsQx = Mathf.FloorToInt(bsQ.x / CityMap.Cell);
+                        int bsQz = Mathf.FloorToInt(bsQ.z / CityMap.Cell);
+                        float bsTop = 0f;
+                        for (int bsDx = -1; bsDx <= 1; bsDx++)
+                            for (int bsDz = -1; bsDz <= 1; bsDz++)
+                            {
+                                int bsCx = bsQx + bsDx;
+                                int bsCz = bsQz + bsDz;
+                                if (bsCx >= 0 && bsCx < CityMap.W && bsCz >= 0 && bsCz < CityMap.H) bsTop = Mathf.Max(bsTop, LevelBuilder.BuildingHeight[bsCx, bsCz]);
+                            }
+                        bsWorst = Mathf.Min(bsWorst, bsQ.y - bsTop);
+                    }
+                    Check(bsWorst >= 8f, "the boss's flight path passes above the rooftops with at least " + bsWorst.ToString("0.0") + " m to spare");
+                    // броня глотает свет: выстрел и вспышка ничего не делают
+                    float bsHp0 = bsBoss.Health;
+                    bsBoss.ShotHit(30f);
+                    bsBoss.Nova(14f, 2f);
+                    Check(Mathf.Approximately(bsBoss.Health, bsHp0) && bsBoss.ArmorHits == 2 && !bsBoss.CoreExposed, "the closed armor swallows light: a shot and a flash do nothing");
+                    // копьё: линия целится и замирает, удар попадает в стоящего героя
+                    float bsUntil = Time.realtimeSinceStartup + 6f;
+                    while (bsBoss != null && bsBoss.LanceStage != 1 && Time.realtimeSinceStartup < bsUntil) yield return null;
+                    bool bsAimed = bsBoss != null && bsBoss.LanceStage == 1;
+                    float bsLife0 = gm.Hero.Life;
+                    bool bsFroze = false;
+                    bsUntil = Time.realtimeSinceStartup + 4f;
+                    while (bsBoss != null && bsBoss.LanceStage == 1 && Time.realtimeSinceStartup < bsUntil)
+                    {
+                        if (bsBoss.LanceLocked) bsFroze = true;
+                        yield return null;
+                    }
+                    yield return null;
+                    float bsDrop = bsLife0 - gm.Hero.Life;
+                    Check(bsAimed && bsFroze && bsBoss != null && bsBoss.LancesFired >= 1 && bsBoss.LancesHit == 1 && bsDrop > 7f && bsDrop < 12f,
+                        "the lance aims, its line freezes, then the strike hits a hero who stood still for " + bsDrop.ToString("0.0") + " light");
+                    // стена между боссом и героем останавливает копьё
+                    Vector3 bsHeroAt = gm.Player.transform.position;
+                    GameObject bsWall = Gfx.StaticBox(null, bsHeroAt + new Vector3(-3f, 3f, 0f), new Vector3(0.6f, 7f, 9f), "BossTestWall");
+                    Physics.SyncTransforms();
+                    int bsHit0 = bsBoss.LancesHit;
+                    int bsFired0 = bsBoss.LancesFired;
+                    float bsLife1 = gm.Hero.Life;
+                    bsUntil = Time.realtimeSinceStartup + 6f;
+                    while (bsBoss != null && bsBoss.LancesFired == bsFired0 && Time.realtimeSinceStartup < bsUntil) yield return null;
+                    yield return null;
+                    Check(bsBoss != null && bsBoss.LancesFired > bsFired0 && bsBoss.LancesHit == bsHit0 && gm.Hero.Life > bsLife1 - 0.5f && bsBoss.LanceTip.x < bsHeroAt.x - 2f,
+                        "a wall between the boss and the hero stops the lance (it ends at x=" + (bsBoss != null ? bsBoss.LanceTip.x.ToString("0.0") : "?") + ", the hero at " + bsHeroAt.x.ToString("0.0") + ")");
+                    // после залпа броня раскрывается
+                    bsUntil = Time.realtimeSinceStartup + 8f;
+                    while (bsBoss != null && !bsBoss.CoreExposed && Time.realtimeSinceStartup < bsUntil) yield return null;
+                    Check(bsBoss != null && bsBoss.CoreExposed && gm.ObjectiveText().Contains("ЯДРО ОТКРЫТО"), "after the volley the armor opens and the objective line says to strike");
+                    // открытое ядро: урон x1.5, осколок света летит к герою
+                    gm.Hero.SetLife(40f, LightReason.Debug);
+                    int bsOrbs0 = LightOrb.All.Count;
+                    float bsHp1 = bsBoss.Health;
+                    bsBoss.ShotHit(30f);
+                    Check(Mathf.Abs((bsHp1 - bsBoss.Health) - 30f * GameConfig.BossCoreMul) < 0.01f && LightOrb.All.Count == bsOrbs0 + 1 && Mathf.Abs(bsBoss.CoreDamage - 30f * GameConfig.BossCoreMul) < 0.01f,
+                        "an exposed core takes x" + GameConfig.BossCoreMul.ToString("0.0") + " damage (" + (bsHp1 - bsBoss.Health).ToString("0") + ") and spills a shard of light toward the hero");
+                    bsBoss.ShotHit(999f);   // опустошает первую треть
+                    Check(bsBoss.BossPhase == 2 && bsBoss.BossState == BossMode.Armored && Mathf.Abs(bsBoss.Health - GameConfig.BossHealth * 2f / 3f) < 0.5f,
+                        "emptying a third slams the armor shut and starts phase 2 (health " + bsBoss.Health.ToString("0") + ")");
+                    yield return new WaitForSecondsRealtime(3f);
+                    Check(gm.Hero.Life > 47f && Math.Abs(gm.Economy.ExpectedLight - gm.Hero.Life) < 0.01,
+                        "the spilled shards fly into the hero (light 40 -> " + gm.Hero.Life.ToString("0") + ") and the ledger reconciles");
+                    // вторая и третья трети, двое Гасителей в третьей фазе, гибель рассеивает остальных
+                    bsBoss.DebugBossMode(BossMode.Open);
+                    yield return new WaitForSecondsRealtime(0.7f);
+                    bsBoss.ShotHit(999f);
+                    Check(bsBoss.BossPhase == 3, "phase 3 begins after the second third");
+                    yield return new WaitForSecondsRealtime(0.3f);
+                    report.AppendLine("  (phase 3 released " + Enemy.CountOf(EnemyKind.Snuffer) + " snuffers)");
+                    Enemy.Spawn(EnemyKind.Shade, NearbyFree(gm.Player.transform.position + new Vector3(0f, 0f, 14f), 3f));
+                    bsBoss.DebugBossMode(BossMode.Open);
+                    yield return new WaitForSecondsRealtime(0.7f);
+                    bsBoss.ShotHit(999f);
+                    yield return null;
+                    Check(Enemy.FindBoss() == null && gm.BossesKilled == 1 && gm.Dir.BossDefeated && Enemy.CountOf(EnemyKind.Shade) == 0 && Enemy.CountOf(EnemyKind.Snuffer) == 0,
+                        "the third third kills the boss; the rest of the darkness dissolves with it");
+                    yield return new WaitForSecondsRealtime(2f);
+                    Check(Enemy.All.Count == 0 && gm.State == GameState.Playing, "after the boss the city is quiet: no new enemies for the rest of the minute");
+                    Destroy(bsWall);
+                    // возрождение сбрасывает бой вместе с минутой
+                    gm.Dir.Respawn();
+                    yield return null;
+                    Check(!gm.Dir.BossSpawned && !gm.Dir.BossDefeated && Enemy.All.Count == 0 && bsBus.State == Bus.Mode.Idle, "a respawn resets the boss fight together with the minute");
+                    yield return new WaitForSecondsRealtime(0.15f);
+                    Check(FinalScreenFx.Instance != null && FinalScreenFx.Instance.Level < 0.01f && LowRes.Instance.FinalTint.a < 0.001f && LowRes.Instance.Embers < 0.001f && LowRes.Instance.Ripple.w < 0.001f,
+                        "a respawn leaves the screen effects of the minute behind: a clean screen");
+                    // автобус уехал, а босс жив: он рассеивается без подсчёта
+                    gm.Player.TeleportTo(new Vector3(bsDoor.x, 0.1f, bsDoor.z), 270f);
+                    gm.Hero.SetLife(100f, LightReason.Debug);
+                    bsBus.Feed(GameConfig.BusNeed + 1f);
+                    yield return new WaitForSecondsRealtime(1.2f);
+                    Enemy bsLate = Enemy.FindBoss();
+                    bool bsThere = bsLate != null;
+                    if (bsLate != null) bsLate.BossDepart();
+                    yield return null;
+                    Check(bsThere && Enemy.FindBoss() == null && gm.BossesKilled == 1, "a boss left alive when the bus departs dissolves behind it (not counted as killed)");
+                    gm.Dir.Respawn();
+                }
+                GameConfig.BossArriveDelay = bsDelay;
+                GameConfig.BossFlyTime = bsFly;
+                GameConfig.BossEnabled = false;   // дальше проверки концовки: боссу в них делать нечего
+                GameSettings.Apply();             // вернуть громкость
+            }
             // Настоящий путь: автобус заведён светом и тронулся (Bus.Leave) — классика начинает концовку: автобус везёт героя и людей,
             // это ловушка, Тьма, герой просыпается за кухонным столом.
             // Настоящая дорожка играет по-настоящему (звук выключен, чтобы не гремела из колонок): её позиция идёт вместе с обороной
@@ -435,6 +637,32 @@ namespace PokaGoryu
             Bus.Instance.FinalLeft = 0.05f;
             yield return new WaitForSecondsRealtime(1.2f);
             Check(gm.State == GameState.Ending && gm.Ending.Active && Bus.Instance.Scripted, "the bus leaving with the people starts the ending");
+            // Начало концовки: герой забегает в автобус, а не оказывается сразу в салоне. Экранные эффекты минуты в неё не переходят
+            {
+                Bus eb = Bus.Instance;
+                Vector3 outside = gm.Player.Cam.transform.position - eb.StartPos;
+                Check(gm.Ending.Boarding && eb.ExteriorVisible && outside.x < -3f && outside.y < 1.9f && Vector3.Distance(eb.transform.position, eb.StartPos) < 0.01f,
+                    "ending: the cutscene starts with the hero running up to the standing bus from outside (camera " + outside.ToString("0.0") + " m from the bus centre)");
+                Check(FinalScreenFx.Instance != null && FinalScreenFx.Instance.Level < 0.01f && LowRes.Instance.FinalTint.a < 0.001f && LowRes.Instance.Embers < 0.001f,
+                    "ending: the screen effects of the final minute do not carry into the cutscene");
+                gm.Ending.DebugSeek(EndingDirector.TDoor - 0.7f);
+                yield return new WaitForSecondsRealtime(0.1f);
+                Vector3 atDoor = gm.Player.Cam.transform.position - eb.StartPos;
+                Check(eb.ExteriorVisible && atDoor.x > -3.5f && atDoor.x < -1.4f, "ending: the bus body is drawn until the camera reaches the door (camera " + atDoor.ToString("0.00") + ")");
+                gm.Ending.DebugSeek(EndingDirector.TDoor + 0.6f);
+                yield return new WaitForSecondsRealtime(0.1f);
+                Vector3 inCabin = gm.Player.Cam.transform.position - eb.StartPos;
+                Check(!eb.ExteriorVisible && inCabin.x > -1.3f && inCabin.x < 1.3f && inCabin.y > RideStage.FloorY + 1.2f && inCabin.y < RideStage.CeilY && Mathf.Abs(inCabin.z) < 5f,
+                    "ending: past the doorway the hero is inside and the outer body is hidden (camera " + inCabin.ToString("0.00") + ")");
+                Check(gm.Ending.BoardingClearance() > 0.9f, "ending: nobody sits in the way from the door to the seat (nearest resident " + gm.Ending.BoardingClearance().ToString("0.0") + " m from the path)");
+                gm.Ending.DebugSeek(EndingDirector.TBoard - 0.3f);
+                yield return new WaitForSecondsRealtime(0.04f);
+                Vector3 seated = gm.Player.Cam.transform.position - eb.StartPos;
+                Check(gm.Ending.Boarding && Vector3.Distance(seated, RideStage.SeatEye) < 0.2f && Vector3.Distance(eb.transform.position, eb.StartPos) < 0.01f,
+                    "ending: the hero sits down first and only then does the bus move (camera " + seated.ToString("0.00") + " against the seat)");
+            }
+            gm.Ending.DebugSeek(EndingDirector.TBoard + 3f);
+            yield return new WaitForSecondsRealtime(0.3f);
             Vector3 busSeat = Bus.Instance.transform.position + RideStage.SeatEye;
             Check(Vector3.Distance(gm.Player.Cam.transform.position, busSeat) < 0.6f && Bus.Instance.transform.position.z > Bus.Instance.StartPos.z,
                 "ending: the camera rides inside the moving bus");
@@ -469,17 +697,17 @@ namespace PokaGoryu
                 Check(handTotal < 260f && handWorst < handTotal / 40f * 2f && Quaternion.Angle(handPrev, palmRaised) < 0.5f,
                     "the hand turn is smooth and lands on the key (path " + handTotal.ToString("0") + " deg, worst step " + handWorst.ToString("0.0") + ")");
             }
-            gm.Ending.DebugSeek(EndingDirector.TOpen + 1.5f);
+            gm.Ending.DebugSeek(EndingDirector.TBoard + EndingDirector.TOpen + 1.5f);
             yield return new WaitForSecondsRealtime(0.3f);
             Check(gm.Ending.DarknessVisible, "ending: the dawn ahead turns out to be the Darkness");
             Check(gm.Ending.HasDriver, "ending: a driver sits at the wheel of the bus");
             Check(gm.Ending.DriverClearance > 1.5f && gm.Ending.DriverClearance < 8f,
                 "ending: six residents ride and nobody sits right behind the driver (nearest resident " + gm.Ending.DriverClearance.ToString("0.0") + " m)");
             // Тьма — объёмный дым, который надвигается на автобус и накрывает его, а потом просачивается в салон
-            gm.Ending.DebugSeek(14.2f);
+            gm.Ending.DebugSeek(EndingDirector.TBoard + 14.2f);
             yield return new WaitForSecondsRealtime(0.3f);
             Check(gm.Ending.DarkPuffsDrawn > 100, "ending: the Darkness is a wall of smoke that reaches the bus (" + gm.Ending.DarkPuffsDrawn + " puffs drawn)");
-            gm.Ending.DebugSeek(15.3f);
+            gm.Ending.DebugSeek(EndingDirector.TBoard + 15.3f);
             yield return new WaitForSecondsRealtime(0.3f);
             Check(gm.Ending.CabinPuffsDrawn > 20, "ending: the Darkness seeps into the cabin (" + gm.Ending.CabinPuffsDrawn + " puffs drawn)");
             gm.Ending.DebugSeek(EndingDirector.TKitchen + 0.5f);
@@ -596,9 +824,51 @@ namespace PokaGoryu
                 yield return null; yield return null;
             }
             int foeAfter = Resources.FindObjectsOfTypeAll<Material>().Length;
-            Check(foeParts[0] >= 12 && foeParts[1] >= 10 && foeParts[2] >= 40,
+            Check(foeParts[0] >= 18 && foeParts[1] >= 10 && foeParts[2] >= 40,
                 "enemies are 3D bodies made of parts: shade " + foeParts[0] + ", snuffer " + foeParts[1] + ", eater " + foeParts[2]);
+            Check(EnemyModels.EaterFaceOverhang() <= 0.001f,
+                "the eater's face wall stays behind its throat: no piece of the body pokes through the mouth (" + (EnemyModels.EaterFaceOverhang() * 100f).ToString("0.0") + " cm)");
             Check(foeAfter <= foeBefore, "enemy bodies release their own materials: " + foeBefore + " -> " + foeAfter);
+
+            // Режиссёр не рождает врагов внутри твёрдых предметов: у фонтана (коробка 5.2 x 0.7 x 5.2 м) в радиусе 2.2 м от центра подходящих точек нет,
+            // а на расстоянии 9-14 м они есть (иначе проверка ничего бы не доказывала)
+            {
+                System.Collections.Generic.List<BoxCollider> fsBases = new System.Collections.Generic.List<BoxCollider>();
+                foreach (BoxCollider fsBox in FindObjectsByType<BoxCollider>())
+                    if (fsBox.name == "Fountain") fsBases.Add(fsBox);
+                int fsBad = 0, fsOpen = 0, fsTried = 0, fsWould = 0;
+                for (int fsIndex = 0; fsIndex < fsBases.Count && fsIndex < 3; fsIndex++)
+                {
+                    Vector3 fsMiddle = fsBases[fsIndex].bounds.center;
+                    fsMiddle.y = 0f;
+                    // без проверки предметов режиссёр выбрал бы такие места (дорога и темнота): иначе проверка была бы пустой
+                    for (int fsA = 0; fsA < 12; fsA++)
+                    {
+                        for (int fsR = 1; fsR <= 5; fsR++)
+                        {
+                            float fsAng = fsA * Mathf.PI / 6f;
+                            Vector3 fsPoint = fsMiddle + new Vector3(Mathf.Cos(fsAng) * fsR * 0.4f, 0f, Mathf.Sin(fsAng) * fsR * 0.4f);
+                            if (CityMap.CanStand(fsPoint.x, fsPoint.z, 1.6f, true) && LightField.Sample(fsPoint + Vector3.up * 1.2f) <= 0.06f) fsWould++;
+                        }
+                    }
+                    for (int fsKind = 0; fsKind < 3; fsKind++)
+                    {
+                        EnemyKind fsEnemy = (EnemyKind)fsKind;
+                        fsTried++;
+                        Vector3 fsSpot;
+                        if (Enemy.SpawnSpotClear(fsMiddle, fsEnemy)) fsBad++;
+                        for (int fsTry = 0; fsTry < 20; fsTry++) if (Director.FindDarkSpot(fsMiddle, 0f, 2.2f, fsEnemy, out fsSpot)) fsBad++;
+                        bool fsFound = false;
+                        for (int fsTry = 0; fsTry < 8 && !fsFound; fsTry++)
+                            if (Director.FindDarkSpot(fsMiddle, 9f, 14f, fsEnemy, out fsSpot) && Enemy.SpawnSpotClear(fsSpot, fsEnemy)) fsFound = true;
+                        if (fsFound) fsOpen++;
+                    }
+                }
+                if (fsBases.Count == 0) report.AppendLine("  (no fountains in the city: the spawn-spot check was skipped)");
+                else Check(fsBad == 0 && fsOpen == fsTried && fsWould > 0,
+                    "the director never picks a spawn spot inside a fountain base (" + fsBases.Count + " fountains): " + fsBad + " bad spots, clear spots found for " + fsOpen + " of " + fsTried
+                    + " kinds; without the solid check " + fsWould + " of the sampled points inside the base would have been dark road");
+            }
 
             // Подсказки: строка с кнопками живёт до первого очага после старта, подсказка про Проводника — до его ручного вызова.
             yield return Key(GKey.Enter);
@@ -634,6 +904,94 @@ namespace PokaGoryu
                     else Check(false, "the test shade disappeared while it was moved");
                 }
                 else Check(false, "the test shade could not be spawned");
+                Enemy.ClearAll();
+            }
+            // Голова Тени следит за героем: тело повёрнуто к нему боком, а голова доворачивается к камере игрока (оглушённая медленнее, 60 град/с)
+            {
+                Vector3 shadeAt = NearbyFree(gm.Player.transform.position + new Vector3(0f, 0f, 9f), 3f);
+                Enemy shade = Enemy.Spawn(EnemyKind.Shade, shadeAt);
+                if (shade != null)
+                {
+                    shade.Stun(8f);
+                    Vector3 anchor = shade.transform.position;
+                    Vector3 toHero = gm.Player.transform.position - anchor;
+                    toHero.y = 0f;
+                    float sideYaw = Mathf.Atan2(toHero.x, toHero.z) * Mathf.Rad2Deg + 90f;
+                    System.Reflection.FieldInfo yawField = typeof(Enemy).GetField("yaw", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    // тело держим на месте и боком к герою: в свете Тень пятится сама, а это сбило бы замер
+                    float until = Time.realtimeSinceStartup + 2.4f;
+                    while (Time.realtimeSinceStartup < until && shade != null)
+                    {
+                        shade.transform.position = anchor;
+                        shade.transform.rotation = Quaternion.Euler(0f, sideYaw, 0f);
+                        if (yawField != null) yawField.SetValue(shade, sideYaw);
+                        shade.Health = 9999f;
+                        yield return null;
+                    }
+                    Transform headT = null;
+                    if (shade != null)
+                        foreach (Transform tr in shade.GetComponentsInChildren<Transform>()) if (tr.name == "Head") { headT = tr; break; }
+                    if (headT != null)
+                    {
+                        Vector3 toCam = gm.Player.Cam.transform.position - headT.position;
+                        toCam.y = 0f;
+                        Vector3 look = headT.forward;
+                        look.y = 0f;
+                        float err = Vector3.Angle(look, toCam);
+                        Check(err < 25f, "a shade's head turns to look at the hero while its body is turned sideways (error " + err.ToString("0") + " deg)");
+                    }
+                    else Check(false, "the shade has a head part to turn");
+                }
+                else Check(false, "the head-tracking shade could not be spawned");
+                Enemy.ClearAll();
+            }
+            // Глаза Пожирателя следят за тем, кого он преследует: проснувшийся человек справа впереди, герой позади. Глаза смотрят на человека,
+            // а не на героя. Человека и Пожирателя держим на месте (человек иначе пошёл бы за героем), потом человека усыпляем и ставим домой.
+            {
+                Survivor prey = null;
+                foreach (Survivor sv in Survivor.All) if (sv.IsAsleep) { prey = sv; break; }
+                if (prey != null)
+                {
+                    int wokenSaved = gm.SurvivorsWoken;
+                    Vector3 home = prey.SpawnPos - Vector3.up * 0.1f;
+                    Vector3 eaterAt = NearbyFree(gm.Player.transform.position + new Vector3(0f, 0f, 16f), 3f);
+                    Enemy eater = Enemy.Spawn(EnemyKind.Eater, eaterAt);
+                    if (eater != null)
+                    {
+                        eater.Stun(10f);
+                        Vector3 preyAt = eaterAt + new Vector3(2.5f, 0f, 8f);
+                        System.Reflection.FieldInfo yawField = typeof(Enemy).GetField("yaw", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                        prey.Relocate(preyAt);
+                        prey.Wake();
+                        float until = Time.realtimeSinceStartup + 1.6f;
+                        while (Time.realtimeSinceStartup < until && eater != null)
+                        {
+                            eater.transform.position = eaterAt;
+                            eater.transform.rotation = Quaternion.identity;
+                            if (yawField != null) yawField.SetValue(eater, 0f);
+                            eater.Health = 9999f;
+                            prey.Relocate(preyAt);
+                            yield return null;
+                        }
+                        Transform ball = null;
+                        if (eater != null)
+                            foreach (Transform tr in eater.GetComponentsInChildren<Transform>()) if (tr.name == "Eyeball") { ball = tr; break; }
+                        if (ball != null)
+                        {
+                            Vector3 preyHead = prey.transform.position + Vector3.up * 1.5f;
+                            float errPrey = Vector3.Angle(ball.forward, preyHead - ball.position);
+                            float errHero = Vector3.Angle(ball.forward, gm.Player.Cam.transform.position - ball.position);
+                            Check(errPrey < 25f && errHero > 60f && Vector3.Distance(eater.LookTarget, preyHead) < 0.05f,
+                                "the eater's eyes follow the survivor it chases, not the hero (off the survivor " + errPrey.ToString("0") + " deg, off the hero " + errHero.ToString("0") + " deg)");
+                        }
+                        else Check(false, "the eater has eyeballs to turn");
+                    }
+                    else Check(false, "the eye-tracking eater could not be spawned");
+                    prey.Relocate(home);
+                    prey.ResetToInitial();
+                    gm.SurvivorsWoken = wokenSaved;
+                }
+                else Check(false, "there is a sleeping survivor to be the eater's prey");
                 Enemy.ClearAll();
             }
             int wokenBefore = gm.SurvivorsWoken;
@@ -675,6 +1033,12 @@ namespace PokaGoryu
                 "endless: R brings the next city, the run clock and returns carry over");
             Check(Survivor.All.Count == 10 && Lamp.All.Count == lampsFirst && GameDifficulty.PressureScale > 1.1f && !gm.ControlHintsVisible,
                 "endless: the next city keeps the street map, is more dangerous, and does not repeat the control hints");
+            // возврат из паузы в бесконечном городе тратит одно из возвращений и отказывает, когда их не осталось
+            gm.ReturnsLeft = 1;
+            bool pauseReturn = gm.ReturnToHearth();
+            bool pauseRefused = !gm.ReturnToHearth();
+            Check(pauseReturn && pauseRefused && gm.ReturnsLeft == 0 && gm.State == GameState.Playing,
+                "endless: the pause return spends a return to the hearth and is refused when none are left");
             gm.ReturnsLeft = 1;
             gm.OnHeroDied();
             Check(gm.State == GameState.Dead && !gm.RunOver, "endless: dying with a return left is not the end");
@@ -729,7 +1093,8 @@ namespace PokaGoryu
         {
             string[] keys = { "drone", "heart", "hum", "crackle", "inhale", "exhale", "flash", "beam", "wake",
                 "lampdie", "shadedie", "hit", "tide", "win", "eater", "shade", "step", "step2", "rustle", "engine", "orb", "munch",
-                "fridge", "tick", "powerdown", "rumble", "sizzle", "swell", "drip" };
+                "fridge", "tick", "powerdown", "rumble", "sizzle", "swell", "drip",
+                "bossdrone", "bossroar", "lancecharge", "lance", "shellopen", "shellslam", "bossdie" };
             float maximum = 0f;
             foreach (string key in keys)
             {
@@ -749,6 +1114,16 @@ namespace PokaGoryu
                     return false;
             return true;
         }
+        /// <summary>Почему точка не свободна (для отчёта о нарушениях навигации): карта не даёт встать или какой коллайдер мешает.</summary>
+        string WhyNotFree(Vector3 point)
+        {
+            if (!CityMap.CanStand(point.x, point.z, 0.5f, true)) return "the city map does not let anyone stand there";
+            foreach (Collider c in Physics.OverlapSphere(point + Vector3.up * 0.9f, 0.3f))
+                if (!c.isTrigger && !c.transform.IsChildOf(gm.Player.transform) && c.GetComponentInParent<Enemy>() == null && c.GetComponentInParent<Survivor>() == null)
+                    return "collider " + c.name + " (" + c.GetType().Name + ", parent " + (c.transform.parent != null ? c.transform.parent.name : "-") + ", layer " + c.gameObject.layer
+                        + ", bounds " + c.bounds.min.ToString("F2") + " .. " + c.bounds.max.ToString("F2") + ")";
+            return "free again";
+        }
         Vector3 NearbyFree(Vector3 center, float radius)
         {
             for (int i = 0; i < 32; i++)
@@ -766,12 +1141,21 @@ namespace PokaGoryu
             GameConfig.ShadesBase = GameConfig.ShadesPerDistrict = GameConfig.ShadesTide = GameConfig.ShadesFinal = 0;
             GameConfig.SpawnIntervalMin = GameConfig.SpawnIntervalMax = GameConfig.SnufferIntervalMin = GameConfig.SnufferIntervalMax = 10000f;
             GameConfig.EaterAtProgress = 2f;
+            // таймеры режиссёра, взведённые до теста (по умолчанию десятки секунд), сработали бы в случайный момент и добавили бы врага,
+            // которого проверка не ставила (так и мигал этот тест: гаситель рождался в основании фонтана); теперь он молчит
+            gm.Dir.Quiet = true;
             foreach (Growth wall in Growth.All) wall.Burn(10000f);
             yield return new WaitForSecondsRealtime(0.2f);
-            int checkedPositions = 0, violations = 0;
+            int checkedPositions = 0, violations = 0, extraEnemies = 0;
+            System.Collections.Generic.List<string> violationLog = new System.Collections.Generic.List<string>();
+            System.Collections.Generic.List<string> trailDump = new System.Collections.Generic.List<string>();
             for (int district = 0; district < CityMap.Hearths.Count; district++)
             {
                 Enemy.ClearAll();
+                // путь каждого врага (раз в 50 мс) — чтобы при нарушении было видно, как он к нему пришёл
+                System.Collections.Generic.Dictionary<Enemy, System.Collections.Generic.List<string>> trails = new System.Collections.Generic.Dictionary<Enemy, System.Collections.Generic.List<string>>();
+                System.Collections.Generic.Dictionary<Enemy, float> trailTime = new System.Collections.Generic.Dictionary<Enemy, float>();
+                System.Collections.Generic.HashSet<Enemy> dumped = new System.Collections.Generic.HashSet<Enemy>();
                 Pt p = CityMap.CenterOf(CityMap.Hearths[district].X, CityMap.Hearths[district].Z);
                 Vector3 stand = NearbyFree(new Vector3(p.X, 0.1f, p.Z), 2.5f);
                 gm.Player.TeleportTo(stand, 0f);
@@ -783,19 +1167,45 @@ namespace PokaGoryu
                     if (Free(spawn)) Enemy.Spawn((EnemyKind)kind, spawn);
                 }
                 yield return null; yield return null;
-                float until = Time.realtimeSinceStartup + 3f;
+                float since = Time.realtimeSinceStartup;
+                float until = since + 3f;
                 while (Time.realtimeSinceStartup < until)
                 {
+                    if (Enemy.All.Count > 3) { extraEnemies++; if (extraEnemies == 1) violationLog.Add("  more than three enemies at once in district " + district + " (the test spawns three)"); }
                     foreach (Enemy enemy in Enemy.All)
                     {
                         if (enemy == null || enemy.Health <= 0f) continue;
                         checkedPositions++;
-                        if (!Free(enemy.transform.position)) violations++;
+                        float now = Time.realtimeSinceStartup;
+                        bool bad = !Free(enemy.transform.position);
+                        System.Collections.Generic.List<string> trail;
+                        if (!trails.TryGetValue(enemy, out trail)) { trail = new System.Collections.Generic.List<string>(); trails[enemy] = trail; trailTime[enemy] = -1f; }
+                        if (now - trailTime[enemy] >= 0.05f)
+                        {
+                            trailTime[enemy] = now;
+                            trail.Add("    t=" + (now - since).ToString("0.00") + " " + enemy.transform.position.ToString("F2") + " " + enemy.DebugState());
+                        }
+                        if (bad)
+                        {
+                            violations++;
+                            if (violationLog.Count < 8)
+                                violationLog.Add("  " + enemy.Kind + " at " + enemy.transform.position.ToString("F1") + ", district " + district + ", " + (now - since).ToString("0.00")
+                                    + " s after the spawn, hero at " + gm.Player.transform.position.ToString("F1") + ": " + WhyNotFree(enemy.transform.position));
+                            if (dumped.Add(enemy) && trailDump.Count < 140)
+                            {
+                                trailDump.Add("  trail of " + enemy.Kind + " in district " + district + " up to the first violation (every 50 ms):");
+                                trailDump.AddRange(trail);
+                            }
+                        }
                     }
                     yield return null;
                 }
             }
-            Check(checkedPositions > 1000 && violations == 0, "enemy navigation in four districts: positions=" + checkedPositions + ", violations=" + violations);
+            Check(checkedPositions > 1000 && violations == 0 && extraEnemies == 0,
+                "enemy navigation in four districts: positions=" + checkedPositions + ", violations=" + violations + ", frames with an unexpected extra enemy=" + extraEnemies);
+            gm.Dir.Quiet = false;
+            foreach (string line in violationLog) report.AppendLine(line);
+            foreach (string line in trailDump) report.AppendLine(line);
             Enemy.ClearAll();
             yield return null;
             Pt destination = CityMap.CenterOf(CityMap.BusX, CityMap.BusZ);

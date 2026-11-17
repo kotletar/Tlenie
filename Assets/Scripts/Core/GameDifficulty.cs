@@ -19,6 +19,12 @@ namespace PokaGoryu
         public static float ResonanceScale { get { return Mode == Challenge.Gentle ? 1.2f : Mode == Challenge.Harsh ? 0.9f : 1f; } }
         public static float PressureScale { get { return (Mode == Challenge.Gentle ? 0.8f : Mode == Challenge.Harsh ? 1.2f : 1f) * (1f + 0.15f * Extra); } }
 
+        /// <summary>Во сколько раз Великий Гаситель крепче: мягкая 0.8, суровая 1.25, в каждом следующем городе ещё на 12%.</summary>
+        public static float BossScale { get { return (Mode == Challenge.Gentle ? 0.8f : Mode == Challenge.Harsh ? 1.25f : 1f) * (1f + 0.12f * Extra); } }
+
+        /// <summary>Во сколько раз сильнее удар копья Тьмы: мягкая 0.8, суровая 1.2.</summary>
+        public static float BossLanceScale { get { return Mode == Challenge.Gentle ? 0.8f : Mode == Challenge.Harsh ? 1.2f : 1f; } }
+
         /// <summary>Лишние Тени одновременно: по одной за каждые два пройденных города.</summary>
         public static int ExtraShades { get { return Extra / 2; } }
 

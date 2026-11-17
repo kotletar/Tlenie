@@ -94,8 +94,170 @@ namespace PokaGoryu
                 case "swell": return Swell();
                 // концовка (кухня)
                 case "drip": return Drip();
+                // Великий Гаситель (босс последней минуты)
+                case "bossdrone": return BossDrone();
+                case "bossroar": return BossRoar();
+                case "lancecharge": return LanceCharge();
+                case "lance": return LanceStrike();
+                case "shellopen": return ShellOpen();
+                case "shellslam": return ShellSlam();
+                case "bossdie": return BossDie();
             }
             return Make("silence", new float[Rate / 10]);
+        }
+
+        // Гул босса: три близкие низкие частоты (биение 0,5 Гц), квинта выше и тихий «хор» (цикл 2 с, все частоты кратны 0,5 Гц: шва нет).
+        static AudioClip BossDrone()
+        {
+            float[] d = Buf(2f);
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float choir = 0.05f * Mathf.Sin(TwoPi * 204f * t) * (0.6f + 0.4f * Mathf.Sin(TwoPi * 1f * t));
+                float v = 0.38f * Mathf.Sin(TwoPi * 34f * t) + 0.30f * Mathf.Sin(TwoPi * 33.5f * t) + 0.22f * Mathf.Sin(TwoPi * 51f * t)
+                    + 0.12f * Mathf.Sin(TwoPi * 68f * t) + choir;
+                d[i] = v * (0.8f + 0.2f * Mathf.Sin(TwoPi * 3f * t));
+            }
+            return Make("bossdrone", d);
+        }
+
+        // Рёв при появлении: падающий низкий тон с гармониками, шум и рокот, медленно нарастает и уходит.
+        static AudioClip BossRoar()
+        {
+            float dur = 3.2f;
+            float[] d = Buf(dur);
+            System.Random r = new System.Random(71);
+            float phase = 0f;
+            float y = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float k = t / dur;
+                float env = Mathf.Clamp01(t / 0.35f) * Mathf.Pow(1f - Mathf.Clamp01((t - 1.6f) / 1.6f), 1.5f);
+                float f0 = Mathf.Lerp(66f, 44f, k) * (1f + 0.02f * Mathf.Sin(TwoPi * 6f * t));
+                phase += TwoPi * f0 / Rate;
+                float v = 0f;
+                for (int h = 1; h <= 7; h++) v += Mathf.Sin(phase * h) / (h * (h > 4 ? 1.8f : 1f));
+                y += (Noise(r) - y) * 0.03f;
+                d[i] = (0.55f * v + 1.3f * y) * env;
+            }
+            return Make("bossroar", d);
+        }
+
+        // Заряд копья: тонкий вой снизу вверх (180 -> 1900 Гц) с дрожью и нарастающим шумом.
+        static AudioClip LanceCharge()
+        {
+            float dur = 1.2f;
+            float[] d = Buf(dur);
+            System.Random r = new System.Random(72);
+            float phase = 0f;
+            float hp = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float k = t / dur;
+                float f = 180f * Mathf.Pow(1900f / 180f, k);
+                phase += TwoPi * f * (1f + 0.015f * Mathf.Sin(TwoPi * 14f * t)) / Rate;
+                float n = Noise(r);
+                float band = n - hp;
+                hp = n;
+                float env = Mathf.Pow(k, 1.4f) * (k > 0.96f ? (1f - k) / 0.04f : 1f);
+                d[i] = (0.55f * Mathf.Sin(phase) + 0.18f * Mathf.Sin(phase * 2f) + 0.35f * band * k + 0.3f * Mathf.Sin(TwoPi * 58f * t)) * env;
+            }
+            return Make("lancecharge", d);
+        }
+
+        // Удар копья: щелчок, тон падает со 1400 до 90 Гц, следом глухой гул.
+        static AudioClip LanceStrike()
+        {
+            float[] d = Buf(0.9f);
+            System.Random r = new System.Random(73);
+            float phase = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float f = 90f + 1310f * Mathf.Exp(-t * 26f);
+                phase += TwoPi * f / Rate;
+                float crack = Noise(r) * Mathf.Exp(-t * 38f);
+                float boom = Mathf.Sin(TwoPi * 48f * t) * Mathf.Exp(-t * 5.5f);
+                d[i] = 0.9f * Mathf.Sin(phase) * Mathf.Exp(-t * 9f) + 0.9f * crack + 0.8f * boom;
+            }
+            return Make("lance", d);
+        }
+
+        // Створки раскрываются: щелчок замка, неровный металлический звон (негармонические частоты) и низкий подъём.
+        static AudioClip ShellOpen()
+        {
+            float dur = 1.5f;
+            float[] d = Buf(dur);
+            System.Random r = new System.Random(74);
+            float[] freqs = { 151f, 243f, 388f, 531f, 702f };
+            float phase = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float f = 120f + 300f * Mathf.Clamp01(t / 0.5f);
+                phase += TwoPi * f / Rate;
+                float v = 0.30f * Mathf.Sin(phase) * Mathf.Clamp01(1f - (t - 0.2f) / 0.6f);
+                for (int j = 0; j < freqs.Length; j++) v += 0.22f / (1f + j * 0.5f) * Mathf.Sin(TwoPi * freqs[j] * t) * Mathf.Exp(-t * (2.2f + 0.5f * j));
+                v += 0.5f * Noise(r) * Mathf.Exp(-t * 70f);
+                v += 0.4f * Mathf.Sin(TwoPi * 46f * t) * Mathf.Sin(Mathf.PI * Mathf.Clamp01(t / dur));
+                d[i] = v;
+            }
+            return Make("shellopen", d);
+        }
+
+        // Створки захлопываются: тяжёлый удар, шум и короткий звон.
+        static AudioClip ShellSlam()
+        {
+            float[] d = Buf(1.0f);
+            System.Random r = new System.Random(75);
+            float[] freqs = { 211f, 334f, 481f };
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float v = 0.9f * Noise(r) * Mathf.Exp(-t * 24f) + 0.9f * Mathf.Sin(TwoPi * 42f * t) * Mathf.Exp(-t * 7f);
+                for (int j = 0; j < freqs.Length; j++) v += 0.22f * Mathf.Sin(TwoPi * freqs[j] * t) * Mathf.Exp(-t * 5f);
+                d[i] = v;
+            }
+            return Make("shellslam", d);
+        }
+
+        // Гибель босса: падающий рык, три волны осколков и поднимающийся светлый аккорд.
+        static AudioClip BossDie()
+        {
+            float dur = 4.8f;
+            float[] d = Buf(dur);
+            System.Random r = new System.Random(76);
+            float[] bells = { 523.25f, 659.25f, 783.99f, 1046.5f };
+            float[] bursts = { 0.15f, 0.55f, 1.0f };
+            float phase = 0f;
+            float y = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float k = t / dur;
+                float f0 = Mathf.Lerp(72f, 20f, Mathf.Pow(k, 0.7f));
+                phase += TwoPi * f0 / Rate;
+                float growl = 0f;
+                for (int h = 1; h <= 5; h++) growl += Mathf.Sin(phase * h) / (h * 1.3f);
+                y += (Noise(r) - y) * 0.05f;
+                float env = Mathf.Clamp01(t / 0.1f) * Mathf.Pow(1f - Mathf.Clamp01((t - 0.2f) / 2.6f), 1.3f);
+                float v = (0.6f * growl + 1.1f * y) * env;
+                for (int j = 0; j < bursts.Length; j++)
+                {
+                    float tb = t - bursts[j];
+                    if (tb > 0f) v += 0.9f * Noise(r) * Mathf.Exp(-tb * 22f);
+                }
+                float tc = t - 1.5f;
+                if (tc > 0f)
+                {
+                    float swell = Mathf.Sin(Mathf.PI * Mathf.Clamp01(tc / 3.2f));
+                    for (int j = 0; j < bells.Length; j++) v += 0.14f * Mathf.Sin(TwoPi * bells[j] * t) * swell * Mathf.Exp(-tc * 0.5f);
+                }
+                d[i] = v;
+            }
+            return Make("bossdie", d);
         }
 
         /// <summary>Капля: тон быстро падает, следом тихий всплеск. Для концовки, где с бедра капает на пол.</summary>

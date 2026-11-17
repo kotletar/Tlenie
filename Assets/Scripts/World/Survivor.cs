@@ -51,10 +51,13 @@ namespace PokaGoryu
         float hurtFlash;
         Vector3 doorPos;
 
+        /// <summary>Слой людей: «Ignore Raycast» (выстрелы и лучи проходят сквозь них). Герой их не задевает: его CharacterController исключает этот слой.</summary>
+        public const int Layer = 2;
+
         public static Survivor Create(Transform parent, Vector3 pos, int index)
         {
             GameObject go = new GameObject("Survivor" + index);
-            go.layer = 2;   // Ignore Raycast: выстрелы и лучи проходят сквозь людей
+            go.layer = Layer;
             go.transform.SetParent(parent, false);
             go.transform.position = pos + Vector3.up * 0.1f;
             CharacterController c = go.AddComponent<CharacterController>();

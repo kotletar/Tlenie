@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace PokaGoryu
 {
-    public enum EnemyKind { Shade, Snuffer, Eater }
+    public enum EnemyKind { Shade, Snuffer, Eater, Boss }
     public enum DamageKind { Flash, Beam, Light }
 
     /// <summary>
@@ -13,7 +13,7 @@ namespace PokaGoryu
     ///  - Пожиратель: огромный, медленный, к свету невосприимчив, жрёт людей. Берётся только лучом (дорого) — или обойти.
     /// В темноте видны только глаза.
     /// </summary>
-    public class Enemy : MonoBehaviour, ILightTarget, IFlashTarget
+    public partial class Enemy : MonoBehaviour, ILightTarget, IFlashTarget
     {
         public static readonly List<Enemy> All = new List<Enemy>();
 
@@ -52,6 +52,8 @@ namespace PokaGoryu
         bool attacking;
         bool hasFace;
         Vector3 faceTarget;
+        Vector3 lookAt;
+        bool hasLook;
         float biteT;
 
         /// <summary>Для автотестов и стенда: число частей тела (отрисовщиков) врага; ноль — тела нет.</summary>
@@ -100,19 +102,24 @@ namespace PokaGoryu
             switch (kind)
             {
                 case EnemyKind.Shade:
-                    maxHealth = 25f; speed = 3.4f; HitRadius = 0.9f; centerY = 1.3f; navRadius = 0.55f; turnRate = 260f;
+                    maxHealth = 25f; speed = 3.4f; HitRadius = 0.9f; centerY = 1.3f; turnRate = 260f;
                     break;
                 case EnemyKind.Snuffer:
-                    maxHealth = 12f; speed = 5.6f; HitRadius = 0.6f; centerY = 1.6f; navRadius = 0.4f; turnRate = 480f;
+                    maxHealth = 12f; speed = 5.6f; HitRadius = 0.6f; centerY = 1.6f; turnRate = 480f;
+                    break;
+                case EnemyKind.Boss:
+                    // парит над площадью: тело стоит в воздухе (позиция — центр шара), по дорогам не ходит и сквозь предметы не считается
+                    maxHealth = GameConfig.BossHealth * GameDifficulty.BossScale; speed = 0f; HitRadius = (EnemyModels.BossR + 1f) * EnemyModels.BossScale; centerY = 0f; turnRate = 45f;
                     break;
                 default:
-                    maxHealth = 160f; speed = 1.7f; HitRadius = 1.8f; centerY = 2.4f; navRadius = 1.5f; turnRate = 90f;
+                    maxHealth = 160f; speed = 1.7f; HitRadius = 1.8f; centerY = 2.4f; turnRate = 90f;
                     break;
             }
+            navRadius = NavRadiusFor(kind);
             Health = maxHealth;
             repathT = Random.Range(0f, 0.6f);
             slideSide = Random.value < 0.5f ? 1f : -1f;
-            SnapToRoad();
+            if (kind != EnemyKind.Boss) SnapToRoad();
 
             // тело: рождается лицом к герою
             PlayerController pl0 = PlayerController.Instance;
@@ -126,6 +133,13 @@ namespace PokaGoryu
             rig = EnemyRig.Create(kind, transform, seed);
 
             if (kind == EnemyKind.Eater) ProcAudio.Source(gameObject, "eater", true, 0.6f, true);
+            else if (kind == EnemyKind.Boss)
+            {
+                // низкий гул слышен издалека: обычные враги затихают за 26 м, его слышно за сто
+                AudioSource drone = ProcAudio.Source(gameObject, "bossdrone", true, 0.25f, true);   // гул тише дорожки минуты на 3 дБ: его чувствуют, а не слушают
+                drone.minDistance = 14f;
+                drone.maxDistance = 140f;
+            }
             else ProcAudio.Source(gameObject, "shade", true, kind == EnemyKind.Shade ? 0.22f : 0.14f, true);
 
             All.Add(this);
@@ -166,6 +180,29 @@ namespace PokaGoryu
         /// </summary>
         bool SolidAt(Vector3 p)
         {
+            return SolidCollider(p) != null;
+        }
+
+        /// <summary>Первый твёрдый предмет в точке (то, что видит ходьба) или null.</summary>
+        Collider SolidCollider(Vector3 p)
+        {
+            return SolidColliderAt(p, navRadius);
+        }
+
+        /// <summary>Радиус ходьбы врага по дорогам и вокруг предметов (капсула тела — 0.8 от него).</summary>
+        static float NavRadiusFor(EnemyKind kind)
+        {
+            switch (kind)
+            {
+                case EnemyKind.Shade: return 0.55f;
+                case EnemyKind.Snuffer: return 0.4f;
+                case EnemyKind.Boss: return 3f;
+                default: return 1.5f;
+            }
+        }
+
+        static Collider SolidColliderAt(Vector3 p, float navRadius)
+        {
             float r = navRadius * 0.8f;
             int n = Physics.OverlapCapsuleNonAlloc(p + Vector3.up * 0.3f, p + Vector3.up * 1.6f, r, solidBuf, ~0, QueryTriggerInteraction.Ignore);
             for (int i = 0; i < n; i++)
@@ -173,9 +210,27 @@ namespace PokaGoryu
                 Collider c = solidBuf[i];
                 if (c == null || c is CharacterController) continue;
                 if (c.name == "Floor") continue;
-                return true;
+                return c;
             }
-            return false;
+            return null;
+        }
+
+        /// <summary>
+        /// Свободно ли место для рождения врага: под его телом нет твёрдого предмета (основание фонтана, автобус, машина, ствол). Раньше режиссёр
+        /// проверял только дорогу и темноту, и враг мог родиться внутри предмета (потом он выходил из него, проходя насквозь).
+        /// </summary>
+        public static bool SpawnSpotClear(Vector3 p, EnemyKind kind)
+        {
+            return SolidColliderAt(p, NavRadiusFor(kind)) == null;
+        }
+
+        /// <summary>Для автотестов: что делает враг одной строкой (цель, обход, путь, твёрдый предмет под телом) — в отчёт о нарушениях навигации.</summary>
+        public string DebugState()
+        {
+            string target = targetLamp != null ? "lamp " + targetLamp.BasePos.ToString("F1") : targetSurvivor != null ? "survivor " + targetSurvivor.transform.position.ToString("F1") : "none/hero";
+            Collider solid = SolidCollider(transform.position);
+            return "target=" + target + " detour=" + detourT.ToString("0.0") + " path=" + (path != null ? path.Count : 0) + " stun=" + stun.ToString("0.0")
+                + " solid=" + (solid != null ? solid.name + " " + solid.bounds.center.ToString("F1") + " size " + solid.bounds.size.ToString("F1") : "-");
         }
 
         /// <summary>Можно ли встать в точку: дорога (не здание, не нарост Тьмы) и без твёрдого предмета; уже застрявшему в предмете разрешено выйти.</summary>
@@ -335,7 +390,7 @@ namespace PokaGoryu
             hitPulse = Mathf.MoveTowards(hitPulse, 0f, dt * 6f);
             biteT = Mathf.MoveTowards(biteT, 0f, dt * 3.5f);
 
-            if (Horizontal(transform.position, pl.transform.position) > 85f)
+            if (Kind != EnemyKind.Boss && Horizontal(transform.position, pl.transform.position) > 85f)
             {
                 Remove();
                 return;
@@ -347,11 +402,28 @@ namespace PokaGoryu
             {
                 case EnemyKind.Shade: UpdateShade(dt, pl); break;
                 case EnemyKind.Snuffer: UpdateSnuffer(dt, pl); break;
+                case EnemyKind.Boss: UpdateBoss(dt, pl); break;
                 default: UpdateEater(dt, pl); break;
             }
             if (dead) return;
+            if (Kind == EnemyKind.Eater)
+            {
+                // глаза Пожирателя следят за тем, кого он преследует (человек в голову, иначе герой в глаза), и пока он оглушён
+                Survivor prey = EaterPrey(transform.position);
+                lookAt = prey != null ? prey.transform.position + Vector3.up * 1.5f : pl.Cam.transform.position;
+                hasLook = true;
+            }
+            else if (Kind == EnemyKind.Boss)
+            {
+                lookAt = pl.Cam.transform.position;
+                hasLook = true;
+            }
             AnimateBody(dt);
         }
+
+        /// <summary>Для автотестов: точка, на которую сейчас смотрят глаза врага (есть только у Пожирателя).</summary>
+        public Vector3 LookTarget { get { return lookAt; } }
+        public bool HasLookTarget { get { return hasLook; } }
 
         /// <summary>Поворот лицом по ходу (а нападая — на цель) и анимация частей тела.</summary>
         void AnimateBody(float dt)
@@ -369,7 +441,7 @@ namespace PokaGoryu
             {
                 float want = Mathf.Atan2(look.x, look.z) * Mathf.Rad2Deg;
                 yaw = Mathf.MoveTowardsAngle(yaw, want, turnRate * dt);
-                transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+                transform.rotation = Quaternion.Euler(Kind == EnemyKind.Boss ? bossPitch : 0f, yaw, 0f);
             }
             EnemyPose pose = new EnemyPose
             {
@@ -378,8 +450,20 @@ namespace PokaGoryu
                 Attacking = attacking || DebugAttack,
                 Stun = Mathf.Max(0f, stun),
                 Hit = hitPulse,
-                Bite = biteT
+                Bite = biteT,
+                HasLook = hasLook,
+                LookAt = lookAt
             };
+            if (Kind == EnemyKind.Boss)
+            {
+                pose.Open = bossOpen;
+                pose.LanceStage = lanceState;
+                pose.Charge = lanceState == 1 ? Mathf.Clamp01(lanceT / Mathf.Max(0.1f, lanceTele)) : 0f;
+                pose.Fire = lanceState == 2 ? Mathf.Clamp01(1f - lanceT / LanceStrikeTime) : 0f;
+                pose.LanceFrom = lanceFrom;
+                pose.LanceTo = lanceEnd;
+                pose.Hurt = 1f - Mathf.Clamp01(Health / Mathf.Max(1f, maxHealth));
+            }
             rig.Animate(pose, dt);
         }
 
@@ -557,12 +641,10 @@ namespace PokaGoryu
 
         // ------------------------------------------------------------------ Пожиратель
 
-        void UpdateEater(float dt, PlayerController pl)
+        /// <summary>Кого преследует Пожиратель: ближайший проснувшийся человек в 70 м; null — тогда он идёт за героем.</summary>
+        Survivor EaterPrey(Vector3 pos)
         {
-            if (stun > 0f) return;
-            Vector3 pos = transform.position;
-
-            Survivor ts = null;
+            Survivor prey = null;
             float best = 70f;
             for (int i = 0; i < Survivor.All.Count; i++)
             {
@@ -572,9 +654,18 @@ namespace PokaGoryu
                 if (d < best)
                 {
                     best = d;
-                    ts = s;
+                    prey = s;
                 }
             }
+            return prey;
+        }
+
+        void UpdateEater(float dt, PlayerController pl)
+        {
+            if (stun > 0f) return;
+            Vector3 pos = transform.position;
+
+            Survivor ts = EaterPrey(pos);
 
             Vector3 tp = ts != null ? ts.transform.position : pl.transform.position;
             Vector3 dir = tp - pos;
@@ -634,6 +725,11 @@ namespace PokaGoryu
         public void TakeDamage(float dmg, DamageKind kind)
         {
             if (dead) return;
+            if (Kind == EnemyKind.Boss)
+            {
+                BossTakeDamage(dmg, kind);
+                return;
+            }
             Health -= dmg;
             hitPulse = Mathf.Max(hitPulse, 0.6f);
             if (Health <= 0f) Die(kind);
@@ -701,7 +797,7 @@ namespace PokaGoryu
         void Update()
         {
             t += Time.unscaledDeltaTime;   // доигрывает и на паузе: иначе осевшее тело повисло бы в кадре
-            float u = Mathf.Clamp01(t / 0.5f);
+            float u = Mathf.Clamp01(t / (rig != null ? rig.CollapseSeconds : 0.5f));
             if (rig != null) rig.Collapse(u);
             if (u >= 1f) Destroy(gameObject);
         }

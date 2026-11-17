@@ -112,6 +112,9 @@ namespace PokaGoryu
             Cc.stepOffset = 0.32f;
             Cc.slopeLimit = 50f;
             Cc.skinWidth = 0.04f;
+            // Люди не загораживают героя: в тесных местах (хранилище света) они обступали его и не давали выйти. Слой людей исключён из его
+            // столкновений, поэтому герой проходит сквозь них; они его по-прежнему обходят и друг друга не пропускают.
+            Cc.excludeLayers = 1 << Survivor.Layer;
 
             GameObject headGo = new GameObject("Head");
             Head = headGo.transform;
@@ -189,6 +192,14 @@ namespace PokaGoryu
         public void Push(Vector3 v)
         {
             pushVel += v;
+        }
+
+        float rumble;
+
+        /// <summary>Тряска камеры от тяжёлого события (босс подлетает, копьё бьёт рядом, броня захлопнулась): сила 0..2, спадает за ~1 с.</summary>
+        public void Rumble(float amount)
+        {
+            rumble = Mathf.Max(rumble, Mathf.Clamp(amount, 0f, 2f));
         }
 
         // ------------------------------------------------------------------ кадр
@@ -690,6 +701,9 @@ namespace PokaGoryu
             float bob = Mathf.Sin(WalkPhase * 2f) * 0.032f * walk;
             float sway = Mathf.Sin(WalkPhase) * 0.018f * walk;
             float shake = Hero.DamageFlash * Hero.DamageFlash * 0.04f;
+            // тряска от босса: гасится за секунду; в настройках её можно выключить вместе с тряской от луча
+            rumble = Mathf.MoveTowards(rumble, 0f, dt * 1.2f);
+            if (rumble > 0f && GameSettings.Shake) shake += rumble * rumble * 0.03f;
             Vector3 jitter = shake > 0.0005f ? Random.insideUnitSphere * shake : Vector3.zero;
             Vector3 combatShake = (Combat != null && GameSettings.Shake) ? Combat.ShakeOffset : Vector3.zero;
             Head.localPosition = headBase + new Vector3(sway, bob, 0f) + jitter + combatShake;

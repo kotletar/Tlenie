@@ -9,17 +9,22 @@ namespace PokaGoryu
     /// остывший кофе, догоревшая свеча, руки как руки. «Сила» объяснилась: под ним тёплая лужа, он описался во сне.
     ///
     /// Всё считается функцией времени (Evaluate), как в предыстории (IntroDirector): камеру и руки ведёт сценарий, герой остаётся тем же
-    /// (PlayerController/HeroBody). Поездка идёт в настоящем городе (камера внутри автобуса, салон достроен RideStage), кухня — та же,
+    /// (PlayerController/HeroBody). Начинается концовка с посадки: из чёрного герой бежит по площади к двери автобуса, перешагивает порог
+    /// (кузов снаружи прячется под тёмным провалом двери), идёт по проходу и садится на переднее правое сиденье; только после этого автобус
+    /// трогается. Поездка идёт в настоящем городе (камера внутри автобуса, салон достроен RideStage), кухня — та же,
     /// что в предыстории (Kitchen), только утром. Пропуск — Пробел, Enter, Esc или клик (после секунды): затемнение и экран итога.
     /// </summary>
     public class EndingDirector : MonoBehaviour
     {
         // ------------------------------------------------------------------ время сценария (секунды от начала)
 
-        public const float TFadeIn = 1.3f;
-        public const float TOpen = 10.4f;         // Тьма за «рассветом» начинает раскрываться
-        public const float TEngulf = 15.0f;       // автобус въезжает в Тьму
-        public const float TKitchen = 18.4f;      // чёрный экран кончился: кухня (кухонное время k = t - TKitchen)
+        public const float TBoard = 5.6f;         // посадка: бег к двери, порог, проход, сиденье; потом автобус трогается (время поездки rt = t - TBoard)
+        public const float TFadeIn = 0.55f;       // из чёрного к бегу
+        public const float TDoor = 2.9f;          // камера пересекает борт: кузов снаружи прячется
+        public const float TOpen = 10.4f;         // (время поездки) Тьма за «рассветом» начинает раскрываться
+        public const float TEngulf = 15.0f;       // (время поездки) автобус въезжает в Тьму
+        public const float RideLen = 18.4f;       // сколько длится поездка до чёрного экрана
+        public const float TKitchen = TBoard + RideLen;   // чёрный экран кончился: кухня (кухонное время k = t - TKitchen)
         public const float KJolt = 1.25f;         // толчок: герой просыпается
         const float KFadeOut = 25.4f;
         const float KTitle = 26.6f;
@@ -44,6 +49,21 @@ namespace PokaGoryu
         static readonly float[] RT = { 0f, 1.4f, 2.7f, 3.6f, 5.0f, 6.0f, 7.1f, 8.2f, 12.0f, 13.6f, 15.0f, 18.4f };
         static readonly float[] RYaw = { 0f, 1f, -62f, -64f, -150f, -150f, -10f, 0f, 0f, -7f, 3f, 0f };
         static readonly float[] RPit = { 2f, 2f, 2f, 1f, 3f, 3f, 3f, 4f, 2f, 0f, 0f, 0f };
+
+        // Посадка: путь глаз героя в системе автобуса (м; x вправо от оси автобуса, z вперёд), курс тела (градусы) и наклон головы.
+        // Бег к двери — кривая Безье из точки на площади к кольцу у двери (RunA -> RunK -> RunB), курс к двери на подходе ровно +x (90 градусов).
+        // Дальше сплайн: ступенька (глаза поднимаются на 0.62 м пола салона), порог (борт на x = -1.35), поворот налево к носу, проход,
+        // поворот направо к сиденью и посадка. Скорость на стыке бега и сплайна не прыгает: начальная касательная сплайна — скорость конца бега.
+        const float TRun = 2.5f;
+        static readonly Vector2 RunA = new Vector2(-13.0f, 4.6f);
+        static readonly Vector2 RunK = new Vector2(-7.0f, 1.65f);
+        static readonly Vector2 RunB = new Vector2(-2.3f, 1.65f);
+        static readonly float[] BT = { 2.50f, 3.00f, 3.40f, 3.90f, 4.40f, 4.85f, 5.25f, 5.60f };
+        static readonly float[] BX = { -2.30f, -1.25f, -0.70f, -0.40f, -0.28f, 0.30f, 0.80f, 0.80f };
+        static readonly float[] BZ = { 1.65f, 1.66f, 1.72f, 2.15f, 2.78f, 3.12f, 3.20f, 3.20f };
+        static readonly float[] BY = { 1.62f, 2.00f, 2.24f, 2.24f, 2.24f, 2.14f, 1.88f, 1.88f };
+        static readonly float[] BYaw = { 90f, 90f, 76f, 30f, 3f, 38f, 0f, 0f };
+        static readonly float[] BPit = { 2.5f, 1.0f, 0.0f, 2.0f, 3.0f, 9.0f, 4.0f, 2.0f };
 
         // Камера на кухне: время, поворот, наклон, крен (градусы), смещение головы от обычного положения за столом (м).
         // k < KJolt: щека на сложенных руках, лицо повёрнуто к кружке (она на расстоянии 0.3 м, голова рядом с ней, не в ней).
@@ -113,9 +133,12 @@ namespace PokaGoryu
         AudioSource engineSrc;
         Vector3 headBase;
         float prevFov = 76f;
-        int stage = -1;            // -1 ещё не начато, 0 поездка, 1 кухня
+        int stage = -1;            // -1 ещё не начато, 2 посадка, 0 поездка, 1 кухня
         int boarded;
         int total;
+        int lastStep = -1;         // номер последнего шага при посадке (по нему звучат шаги)
+        bool insideSky;            // небо и туман уже салонные (после порога)
+        Cap[] boardCaps;
         Cap[] rideCaps;
         Cap[] kitchenCaps;
 
@@ -137,6 +160,10 @@ namespace PokaGoryu
 
         public bool Active { get { return active; } }
         public float Elapsed { get { return t; } }
+        /// <summary>Время поездки (от момента, когда герой сел и автобус тронулся); во время посадки 0.</summary>
+        public float RideTime { get { return Mathf.Max(0f, t - TBoard); } }
+        /// <summary>Идёт посадка: герой ещё бежит к автобусу, идёт по проходу или садится.</summary>
+        public bool Boarding { get { return active && t < TBoard; } }
         public float Duration { get { return TKitchen + KEnd; } }
         /// <summary>Тьма за «рассветом» уже раскрылась (для автотестов).</summary>
         public bool DarknessVisible { get { return ride != null && ride.GateOpen > 0.1f; } }
@@ -162,9 +189,11 @@ namespace PokaGoryu
             total = Survivor.All.Count;
             BuildCaps();
             Enemy.ClearAll();
+            LightOrb.ClearAll();                // осколки света, летевшие к герою в последние секунды, в кадре бега не нужны
+            Survivor.IntroHideAll(true);        // не севшие в автобус (разбуженные в последний момент) не стоят на пути героя к двери: камера пройдёт сквозь кольцо
 
-            // автобус у вокзала, дальше он едет под управлением сценария; салон достроен
-            bus.BeginCinematic();
+            // автобус у вокзала, дальше он едет под управлением сценария; салон достроен. Кузов снаружи виден, пока герой бежит к двери
+            bus.BeginCinematic(true);
             gateZ = bus.StartPos.z + GateDist + RideStage.SeatEye.z;
             ride = RideStage.Build(bus, gateZ, boarded);
             for (int i = 0; i < ride.Ceiling.Length; i++) LightField.Register(ride.Ceiling[i]);
@@ -190,6 +219,8 @@ namespace PokaGoryu
             t = 0f;
             lastT = -1f;
             lastTick = -1f;
+            lastStep = -1;
+            insideSky = false;
             skipping = false;
             skipT = 0f;
             fadeA = 1f;
@@ -275,6 +306,7 @@ namespace PokaGoryu
             if (lr == null) return;
             lr.Vignette = LowRes.DefaultVignette;
             lr.ExtraGlitch = 0f;
+            lr.ClearFinalFx();   // эффекты последней минуты (каёмка, угольки, рябь) в концовку не переходят
         }
 
         // ------------------------------------------------------------------ субтитры
@@ -284,15 +316,21 @@ namespace PokaGoryu
             // как поездка звучит, зависит от того, кто с героем в автобусе
             string withMe = boarded >= 3 ? "Все со мной. Все живы." : (boarded >= 1 ? "Нас мало, но мы живы." : "Со мной только водитель. Но я выбрался.");
             string line = boarded >= 1 ? "— Смотрите, как светло!" : "Как светло...";
+            float b = TBoard;   // подписи поездки заданы во времени поездки, считаем их от посадки
+            boardCaps = new Cap[]
+            {
+                new Cap(0.45f, 2.3f, "Скорее! Сейчас уедут без меня!"),
+                new Cap(3.15f, 4.3f, "Успел!")
+            };
             rideCaps = new Cap[]
             {
-                new Cap(0.9f, 3.2f, "Мы едем. Получилось."),
-                new Cap(3.5f, 6.2f, withMe),
-                new Cap(6.7f, 9.0f, "Впереди рассвет. Настоящий."),
-                new Cap(9.3f, 11.3f, line),
-                new Cap(11.6f, 13.2f, "Почему он... мигает?"),
-                new Cap(13.4f, 14.7f, "Это не рассвет."),
-                new Cap(14.8f, 16.0f, "Это ловушка.")
+                new Cap(b + 0.9f, b + 3.2f, "Мы едем. Получилось."),
+                new Cap(b + 3.5f, b + 6.2f, withMe),
+                new Cap(b + 6.7f, b + 9.0f, "Впереди рассвет. Настоящий."),
+                new Cap(b + 9.3f, b + 11.3f, line),
+                new Cap(b + 11.6f, b + 13.2f, "Почему он... мигает?"),
+                new Cap(b + 13.4f, b + 14.7f, "Это не рассвет."),
+                new Cap(b + 14.8f, b + 16.0f, "Это ловушка.")
             };
             string saved = "Зато во сне я спас " + boarded + " из " + total + "!";
             if (boarded == 0) saved = "Зато во сне я выбрался из города!";
@@ -370,6 +408,7 @@ namespace PokaGoryu
             t = newT;
             lastT = newT - 0.001f;
             lastTick = Mathf.Floor(newT) - 1f;
+            lastStep = -1;
         }
 
         // ------------------------------------------------------------------ сценарий
@@ -434,10 +473,15 @@ namespace PokaGoryu
         void Evaluate(float real)
         {
             if (ride == null || pc == null) return;
-            if (real < TKitchen)
+            if (real < TBoard)
+            {
+                if (stage != 2) EnterBoarding();
+                EvaluateBoarding(real);
+            }
+            else if (real < TKitchen)
             {
                 if (stage != 0) EnterRide();
-                EvaluateRide(real);
+                EvaluateRide(real - TBoard);
             }
             else
             {
@@ -445,6 +489,28 @@ namespace PokaGoryu
                 EvaluateKitchen(real - TKitchen, real);
             }
             lastT = real;
+        }
+
+        void EnterBoarding()
+        {
+            stage = 2;
+            body.SnapPose();   // руки сразу в позе бега, а не летят к ней из прежней
+            body.HandObstacle = null;
+            body.ArmScale = 0.8f;
+            body.SetSkinTone(1f);
+            if (ride != null) ride.SetDarknessVisible(false);
+            if (kitchen != null) kitchen.Root.gameObject.SetActive(false);
+            if (dayLight != null) LightField.Unregister(dayLight);
+            if (faceLight != null) LightField.Unregister(faceLight);
+            dayLight = null;
+            faceLight = null;
+            // возврат к началу (перемотка в автотестах): автобус снаружи снова виден, небо и туман обычные
+            if (bus != null) bus.ShowExterior();
+            if (insideSky) Gfx.ApplyGlobals();
+            insideSky = false;
+            ResetPostLook();
+            lastStep = -1;
+            if (engineSrc != null && !engineSrc.isPlaying) engineSrc.Play();
         }
 
         void EnterRide()
@@ -457,11 +523,216 @@ namespace PokaGoryu
             body.ArmScale = 0.8f;
             body.SetSkinTone(1f);
             pc.Cam.fieldOfView = 74f;
+            if (bus != null) bus.HideExterior();   // перемотка из посадки прямо в поездку
+            insideSky = true;
             if (dayLight != null) LightField.Unregister(dayLight);
             if (faceLight != null) LightField.Unregister(faceLight);
             dayLight = null;
             faceLight = null;
             if (engineSrc != null && !engineSrc.isPlaying) engineSrc.Play();
+        }
+
+        // ------------------------------------------------------------------ посадка
+
+        static float Herm(float p0, float v0, float p1, float v1, float h, float u)
+        {
+            float u2 = u * u;
+            float u3 = u2 * u;
+            return (2f * u3 - 3f * u2 + 1f) * p0 + (u3 - 2f * u2 + u) * h * v0 + (-2f * u3 + 3f * u2) * p1 + (u3 - u2) * h * v1;
+        }
+
+        /// <summary>Сплайн по ключам с заданной скоростью в первом ключе (остальные касательные — по соседним ключам, как в Spline).</summary>
+        static float SplineV(float[] ts, float[] vs, float x, float v0)
+        {
+            int n = ts.Length;
+            if (x <= ts[0]) return vs[0];
+            if (x >= ts[n - 1]) return vs[n - 1];
+            int i = 0;
+            while (i < n - 2 && x >= ts[i + 1]) i++;
+            float h = ts[i + 1] - ts[i];
+            float u = (x - ts[i]) / h;
+            float m0 = i > 0 ? (vs[i + 1] - vs[i - 1]) / (ts[i + 1] - ts[i - 1]) : v0;
+            float m1 = i + 2 < n ? (vs[i + 2] - vs[i]) / (ts[i + 2] - ts[i]) : 0f;   // у сиденья скорость затухает в ноль
+            return Herm(vs[i], m0, vs[i + 1], m1, h, u);
+        }
+
+        /// <summary>Бег к двери: точка на площади (x, z в системе автобуса) и курс тела. Темп спадает: на старте на треть быстрее среднего, у двери вдвое медленнее.</summary>
+        static Vector2 RunPoint(float time, out float yawDeg)
+        {
+            float u = Mathf.Clamp01(time / TRun);
+            float s = 1.3f * u - 0.3f * u * u;
+            float m = 1f - s;
+            Vector2 p = m * m * RunA + 2f * m * s * RunK + s * s * RunB;
+            Vector2 d = 2f * m * (RunK - RunA) + 2f * s * (RunB - RunK);
+            yawDeg = Mathf.Atan2(d.x, d.y) * Mathf.Rad2Deg;
+            return p;
+        }
+
+        /// <summary>
+        /// Глаза героя при посадке в момент time: положение в системе автобуса, курс тела и наклон головы (градусы).
+        /// Чистая функция времени, как и всё в сценарии.
+        /// </summary>
+        public static void BoardPose(float time, out Vector3 local, out float yawDeg, out float pitchDeg)
+        {
+            float y;
+            if (time <= TRun)
+            {
+                Vector2 q = RunPoint(time, out y);
+                local = new Vector3(q.x, BY[0], q.y);
+                yawDeg = y;
+                pitchDeg = Mathf.Lerp(4f, BPit[0], S(0f, TRun, time));
+                return;
+            }
+            // скорость в конце бега: сплайн продолжает её, а не начинает заново
+            float yEnd, yPrev;
+            Vector2 qEnd = RunPoint(TRun, out yEnd);
+            Vector2 qPrev = RunPoint(TRun - 0.02f, out yPrev);
+            Vector2 v = (qEnd - qPrev) / 0.02f;
+            float vYaw = (yEnd - yPrev) / 0.02f;
+            local = new Vector3(SplineV(BT, BX, time, v.x), SplineV(BT, BY, time, 0f), SplineV(BT, BZ, time, v.y));
+            yawDeg = SplineV(BT, BYaw, time, vYaw);
+            pitchDeg = SplineV(BT, BPit, time, 0f);
+        }
+
+        /// <summary>Сколько шагов герой сделал к моменту time: бег (темп спадает с 3 до 2.5 шагов в секунду), потом шаг по салону; у сиденья шаги кончаются.</summary>
+        static float StepCount(float time)
+        {
+            float run = Mathf.Min(time, TRun);
+            float steps = 3.0f * run - 0.1f * run * run;
+            if (time > TRun) steps += 2.0f * (Mathf.Min(time, 5.0f) - TRun);
+            return steps;
+        }
+
+        /// <summary>Сила качки от шагов: 1 — бег, поменьше при шаге по салону, 0 — сидит.</summary>
+        static float BobEnvelope(float time)
+        {
+            return Mathf.Lerp(1f, 0.55f, S(2.6f, 3.4f, time)) * (1f - S(4.6f, 5.2f, time));
+        }
+
+        /// <summary>Для автотестов: самое близкое расстояние (по полу, м) от пути героя внутри салона (после порога) до людей в салоне и водителя.</summary>
+        public float BoardingClearance()
+        {
+            if (ride == null) return 9f;
+            float best = 9f;
+            for (float time = TDoor; time <= TBoard; time += 0.05f)
+            {
+                Vector3 p;
+                float yaw, pit;
+                BoardPose(time, out p, out yaw, out pit);
+                for (int i = 0; i < ride.Passengers.Count; i++)
+                {
+                    Vector3 d = ride.Passengers[i].Root.localPosition - p;
+                    d.y = 0f;
+                    best = Mathf.Min(best, d.magnitude);
+                }
+            }
+            return best;
+        }
+
+        void EvaluateBoarding(float t)
+        {
+            Vector3 bp = bus.StartPos;
+            bus.transform.position = bp;
+
+            Vector3 local;
+            float yaw, pit;
+            BoardPose(t, out local, out yaw, out pit);
+
+            // качка от шагов: голова ныряет на каждый шаг, чуть уходит в стороны и кренится; чем ближе к сиденью, тем спокойнее
+            float steps = StepCount(t);
+            float env = BobEnvelope(t);
+            float sw = Mathf.Sin(Mathf.PI * steps);
+            float dive = 0.5f + 0.5f * Mathf.Cos(2f * Mathf.PI * steps);
+            Quaternion hq = Quaternion.Euler(0f, yaw, 0f);
+            Vector3 eye = bp + local + hq * Vector3.right * (0.03f * env * sw) + Vector3.up * (-0.055f * env * dive);
+            // корень игрока стоит под головой и повёрнут по курсу тела: руки сценария заданы в его системе, значит, идут перед камерой
+            pc.TeleportTo(eye - hq * headBase, yaw);
+            float breath = 0.4f * Mathf.Sin(t * 0.9f);
+            pc.Head.localRotation = Quaternion.Euler(pit + 1.6f * env * Mathf.Cos(2f * Mathf.PI * steps) + breath, 1.2f * env * Mathf.Sin(Mathf.PI * steps + 0.6f), 1.8f * env * sw);
+            pc.Cam.fieldOfView = Mathf.Lerp(82f, 74f, S(2.6f, 4.8f, t));   // на бегу шире (скорость), в салоне как в поездке
+
+            // руки: бегут (кулаки, ладонями внутрь, в противофазе), в салоне опускаются, при посадке ложатся на колени
+            body.ShoulderShift = Vector3.zero;
+            float lap = S(4.7f, 5.3f, t);
+            for (int a = 0; a < 2; a++)
+            {
+                float side = a == 0 ? -1f : 1f;
+                float ph = Mathf.PI * steps + a * Mathf.PI;
+                float swing = Mathf.Sin(ph) * env;
+                Vector3 runP = headBase + new Vector3(side * 0.24f, -0.24f + 0.04f * Mathf.Abs(Mathf.Cos(ph)) * env, 0.30f + 0.20f * swing);   // у нижних углов кадра, как «готовая» поза в игре (y 1.38, z 0.45)
+                Quaternion runR = Quaternion.LookRotation(new Vector3(-side * 0.12f, 0.15f + 0.25f * swing, 1f), new Vector3(side, 0.35f, 0f));
+                Vector3 lapP = headBase + new Vector3(a == 0 ? -0.22f : 0.20f, -0.66f, 0.40f);
+                Quaternion lapR = Quaternion.LookRotation(new Vector3(0f, 0.05f, 1f), new Vector3(0f, 1f, 0f));
+                body.OverridePos[a] = Vector3.Lerp(runP, lapP, lap);
+                body.OverrideRot[a] = Quaternion.Slerp(runR, lapR, lap);
+                body.OverrideOpen[a] = Mathf.Lerp(0.15f, 0.35f, lap);
+            }
+
+            // кузов снаружи прячется под самым тёмным моментом провала двери, небо и туман — салонные с этого же момента
+            bool outside = t < TDoor;
+            if (outside) bus.ShowExterior();
+            else bus.HideExterior();
+            if (!outside)
+            {
+                ApplyRideSky(0f, bp.z);
+                insideSky = true;
+            }
+            else if (insideSky)
+            {
+                Gfx.ApplyGlobals();
+                insideSky = false;
+            }
+            bus.CineLight = 1f - S(TDoor, TDoor + 1.0f, t);
+
+            // свет: у героя на улице он ярче, в салоне как в поездке; лампы салона и люди уже горят
+            hero.GlowScale = Mathf.Lerp(0.9f, 0.30f, S(2.6f, 4.2f, t));
+            float rt = t - TBoard;   // время поездки до её начала отрицательно: водитель и пассажиры в позе начала поездки
+            CabinLights(bp, rt, 1f, 1f);
+
+            // затемнение: из чёрного, и короткий провал в тёмный дверной проём
+            if (!skipping) fadeA = Mathf.Max(1f - S(0f, TFadeIn, t), 0.92f * S(TDoor - 0.28f, TDoor, t) * (1f - S(TDoor, TDoor + 0.38f, t)));
+            flashA = 0f;
+
+            // звуки: двигатель на холостом ходу, дыхание, шаги по земле (звонкие) и по салону (глухие), посадка
+            if (engineSrc != null)
+            {
+                AudioMix.SetVolume(engineSrc, 0.30f + 0.05f * S(2.6f, 3.6f, t));
+                engineSrc.pitch = 0.85f;
+            }
+            int si = Mathf.FloorToInt(steps);
+            if (si != lastStep)
+            {
+                if (lastStep >= 0 && si > lastStep && t < 5.1f)
+                {
+                    bool ground = t < TDoor;
+                    ProcAudio.OneShot(sfx, (si & 1) == 0 ? "step" : "step2", ground ? 0.55f : 0.38f, ground ? 1.2f : 0.78f);
+                }
+                lastStep = si;
+            }
+            if (Crossed(0.15f)) ProcAudio.OneShot(sfx, "inhale", 0.25f, 1.25f);
+            if (Crossed(TDoor)) ProcAudio.OneShot(sfx, "rumble", 0.30f, 1.3f);   // порог: гулкая подножка
+            if (Crossed(5.0f)) ProcAudio.OneShot(sfx, "rustle", 0.45f, 0.9f);    // сел
+            if (Crossed(5.25f)) ProcAudio.OneShot(sfx, "exhale", 0.30f, 0.95f);
+        }
+
+        /// <summary>
+        /// Свет салона: лампы под потолком и огоньки людей. anim — время для их анимации (время поездки), flicker — мигание перед
+        /// Тьмой (1 — ровно), dead — сколько света осталось (0 — погас совсем).
+        /// </summary>
+        void CabinLights(Vector3 bp, float anim, float flicker, float dead)
+        {
+            for (int i = 0; i < ride.Ceiling.Length; i++)
+            {
+                ride.Ceiling[i].Pos = bp + ride.CeilingLocal(i);
+                ride.Ceiling[i].Intensity = 0.34f * flicker * dead;
+            }
+            for (int i = 0; i < ride.Passengers.Count; i++)
+            {
+                float die = DieTime(i);
+                float glow = (1f - S(die - 0.15f, die + 0.25f, anim)) * flicker;
+                ride.SetPassenger(i, glow, anim);
+                ride.Passengers[i].Light.Pos = bp + ride.Passengers[i].Root.localPosition + new Vector3(0f, 0.3f, 0f);
+            }
         }
 
         void EnterKitchen()
@@ -526,18 +797,8 @@ namespace PokaGoryu
             float flicker = Mathf.Lerp(1f, Mathf.PerlinNoise(t * 13f, 2.7f) > 0.45f ? 1f : 0.25f, S(11.0f, 13.6f, t));
             float dead = 1f - S(14.4f, 15.2f, t);
             hero.GlowScale = 0.30f * flicker * dead;
-            for (int i = 0; i < ride.Ceiling.Length; i++)
-            {
-                ride.Ceiling[i].Pos = bp + ride.CeilingLocal(i);
-                ride.Ceiling[i].Intensity = 0.34f * Mathf.Min(1f, S(0f, 0.8f, t)) * flicker * dead;
-            }
-            for (int i = 0; i < ride.Passengers.Count; i++)
-            {
-                float die = DieTime(i);
-                float glow = (1f - S(die - 0.15f, die + 0.25f, t)) * flicker;
-                ride.SetPassenger(i, glow, t);
-                ride.Passengers[i].Light.Pos = bp + ride.Passengers[i].Root.localPosition + new Vector3(0f, 0.3f, 0f);
-            }
+            bus.CineLight = 0f;
+            CabinLights(bp, t, flicker, dead);
 
             // дорога, рассвет-приманка, Тьма (объёмный дым надвигается на автобус и накрывает его)
             ride.SetRoadLamps(ride.FrontZ(t));
@@ -553,39 +814,39 @@ namespace PokaGoryu
                 lr.ExtraGlitch = 0.5f * S(14.0f, 15.0f, t) * (Mathf.PerlinNoise(t * 17f, 1.3f) > 0.4f ? 1f : 0.3f);
             }
 
-            // затемнение: из чёрного, потом тьма накрывает экран и он гаснет (чёрный до самой кухни)
-            if (!skipping) fadeA = Mathf.Max(1f - S(0f, TFadeIn, t), S(15.0f, 16.3f, t));
+            // затемнение: чёрного в начале нет (поездка продолжает посадку), потом тьма накрывает экран и он гаснет (чёрный до самой кухни)
+            if (!skipping) fadeA = S(15.0f, 16.3f, t);
             flashA = 0f;
 
-            // звуки
+            // звуки (времена поездки: Crossed считает от начала всего сценария, поэтому + TBoard)
             if (engineSrc != null)
             {
-                float ev = 0.50f * S(0f, 2.0f, t) * (1f - S(14.6f, 15.6f, t));
+                float ev = 0.50f * (0.7f + 0.3f * S(0f, 2.0f, t)) * (1f - S(14.6f, 15.6f, t));   // на холостом ходу при посадке было 0.35
                 AudioMix.SetVolume(engineSrc, ev);
                 engineSrc.pitch = 0.85f + 0.35f * S(0f, 7f, t);
             }
-            if (Crossed(0.3f)) ProcAudio.OneShot(sfx, "rumble", 0.25f, 1.1f);
-            if (Crossed(6.3f)) ProcAudio.OneShot(sfx, "win", 0.30f, 1.15f);
-            if (Crossed(9.7f)) ProcAudio.OneShot(sfx, "swell", 0.40f, 0.8f);
+            if (Crossed(TBoard + 0.3f)) ProcAudio.OneShot(sfx, "rumble", 0.25f, 1.1f);   // тронулись
+            if (Crossed(TBoard + 6.3f)) ProcAudio.OneShot(sfx, "win", 0.30f, 1.15f);
+            if (Crossed(TBoard + 9.7f)) ProcAudio.OneShot(sfx, "swell", 0.40f, 0.8f);
             float[] beats = { 11.0f, 11.9f, 12.7f, 13.4f, 14.0f, 14.5f };
             for (int i = 0; i < beats.Length; i++)
             {
-                if (Crossed(beats[i])) ProcAudio.OneShot(sfx, "heart", 0.55f + 0.05f * i, 1f);
+                if (Crossed(TBoard + beats[i])) ProcAudio.OneShot(sfx, "heart", 0.55f + 0.05f * i, 1f);
             }
-            if (Crossed(12.4f)) ProcAudio.OneShot(sfx, "rumble", 0.65f, 0.8f);
-            if (Crossed(13.2f)) ProcAudio.OneShot(sfx, "tide", 0.55f, 0.9f);
+            if (Crossed(TBoard + 12.4f)) ProcAudio.OneShot(sfx, "rumble", 0.65f, 0.8f);
+            if (Crossed(TBoard + 13.2f)) ProcAudio.OneShot(sfx, "tide", 0.55f, 0.9f);
             for (int i = 0; i < ride.Passengers.Count; i++)
             {
-                if (Crossed(DieTime(i))) ProcAudio.OneShot(sfx, "lampdie", 0.55f, 0.85f + 0.07f * i);
+                if (Crossed(TBoard + DieTime(i))) ProcAudio.OneShot(sfx, "lampdie", 0.55f, 0.85f + 0.07f * i);
             }
-            if (Crossed(14.15f)) ProcAudio.OneShot(sfx, "eater", 0.6f, 0.6f);   // фронт Тьмы бьёт в автобус
-            if (Crossed(TEngulf - 0.1f))
+            if (Crossed(TBoard + 14.15f)) ProcAudio.OneShot(sfx, "eater", 0.6f, 0.6f);   // фронт Тьмы бьёт в автобус
+            if (Crossed(TBoard + TEngulf - 0.1f))
             {
                 ProcAudio.OneShot(sfx, "tide", 1.0f, 0.7f);
                 ProcAudio.OneShot(sfx, "powerdown", 0.85f, 0.9f);
             }
-            if (Crossed(16.6f)) ProcAudio.OneShot(sfx, "tick", 0.25f, 0.8f);
-            if (Crossed(17.6f)) ProcAudio.OneShot(sfx, "tick", 0.28f, 0.8f);
+            if (Crossed(TBoard + 16.6f)) ProcAudio.OneShot(sfx, "tick", 0.25f, 0.8f);
+            if (Crossed(TBoard + 17.6f)) ProcAudio.OneShot(sfx, "tick", 0.28f, 0.8f);
         }
 
         void ApplyRideSky(float t, float busZ)
@@ -842,6 +1103,7 @@ namespace PokaGoryu
             GUI.DrawTexture(new Rect(0f, 0f, w, bar), Texture2D.whiteTexture);
             GUI.DrawTexture(new Rect(0f, h - bar, w, bar), Texture2D.whiteTexture);
 
+            DrawCaps(boardCaps, w, h, bar);
             DrawCaps(rideCaps, w, h, bar);
             DrawCaps(kitchenCaps, w, h, bar);
 

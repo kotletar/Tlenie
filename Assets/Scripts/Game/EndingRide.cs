@@ -33,6 +33,7 @@ namespace PokaGoryu
         public const float SillY = 1.45f;
         public const float HeadY = 2.78f;
         public const float CeilY = 2.96f;
+        public const float DoorRowZ = 1.6f;  // ряд у двери (дверь на левом борту у z 1.5): слева в нём вход, а не сиденье
         public const float RoadX = 66f;      // ось дороги из города (клетки 10-11 по 6 м)
         public const float CityEdgeZ = 408f; // дальше города нет: дорогу и всё остальное достраиваем
 
@@ -233,11 +234,12 @@ namespace PokaGoryu
             Vector3 wc = new Vector3(-0.7f, FloorY + 0.76f, 4.42f);
             b.Rod(wc, new Vector3(-0.7f, FloorY + 0.54f, 4.70f), 0.03f, 5, dark);
             Seat(b, DriverSeat.x, DriverSeat.y);
-            // сиденья: по два ряда с каждой стороны
+            // сиденья: по два ряда с каждой стороны. Слева в ряду у двери (z 1.6) сиденья нет: там вход, герой забегает через дверь
+            // у центра левого борта (Bus.DoorPos) и идёт к своему месту по проходу; сиденье стояло бы ровно на его пути
             float[] rows = { 3.2f, 1.6f, 0.0f, -1.6f, -3.2f };
             for (int i = 0; i < rows.Length; i++)
             {
-                if (i > 0) Seat(b, -0.8f, rows[i]);
+                if (i > 0 && Mathf.Abs(rows[i] - DoorRowZ) > 0.01f) Seat(b, -0.8f, rows[i]);
                 Seat(b, 0.8f, rows[i]);
             }
             // поручни
@@ -379,9 +381,9 @@ namespace PokaGoryu
 
         void BuildPassengers(int boarded)
         {
-            // кто где сидит: сзади героя и через проход, потом по рядам. Слева у самого водителя (x -0.8, z 3.2) сидеть некому: там нет
-            // сиденья, а человек оказывался в 0,7 м за спиной водителя и ногами в его кресле
-            Vector2[] seats = { new Vector2(0.8f, 1.6f), new Vector2(-0.8f, 1.6f), new Vector2(0.8f, 0f), new Vector2(-0.8f, 0f), new Vector2(0.8f, -1.6f), new Vector2(-0.8f, -1.6f) };
+            // кто где сидит: сзади героя, потом по рядам. Слева у самого водителя (x -0.8, z 3.2) сидеть некому: там нет
+            // сиденья, а человек оказывался в 0,7 м за спиной водителя и ногами в его кресле. Слева у двери (z 1.6) тоже нет сиденья: вход
+            Vector2[] seats = { new Vector2(0.8f, 1.6f), new Vector2(0.8f, 0f), new Vector2(-0.8f, 0f), new Vector2(0.8f, -1.6f), new Vector2(-0.8f, -1.6f), new Vector2(-0.8f, -3.2f) };
             int count = Mathf.Clamp(boarded, 0, seats.Length);
             for (int i = 0; i < count; i++)
             {
